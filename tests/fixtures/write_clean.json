@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Write","tool_input":{"file_path":"/repo/util.js","content":"export const add = (a,b) => a + b;"}}

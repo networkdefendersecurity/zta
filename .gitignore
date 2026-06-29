@@ -1,2 +1,7 @@
 # Zero-trust runtime audit log (machine-local, not policy config)
 .claude/logs/
+
+# Go build artifacts
+/zta
+*.test
+*.out

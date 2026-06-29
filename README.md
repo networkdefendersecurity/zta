@@ -1,83 +1,219 @@
-# Zero-Trust Agent Pack
+# zta — Zero-Trust enforcement for AI coding agents
 
-A drop-in `.claude/` policy bundle plus a CI auditor that holds an agentic coding tool
-(and the subagents it spawns) to the Anthropic *Zero Trust for AI Agents* Foundation tier.
+`zta` is a single, zero-dependency Go binary that holds an AI coding agent — and
+any subagents it spawns — to a zero-trust policy **while it works**. It blocks
+destructive commands, secret reads/writes, force-pushes, and policy tampering at
+the moment the agent tries them, regardless of which agent you run.
 
-It has two layers:
+It is the successor to this repo's original Claude-Code-only `.claude/` bash pack
+([see below](#legacy-claude-code-pack)), rebuilt to be **agent-agnostic**.
 
-- **Enforce** — runtime guards (`PreToolUse` hooks), deny-by-default permissions, and
-  least-privilege subagents that constrain the agent *while it works*.
-- **Verify** — a CI auditor (`zt-audit/`) that scores the repo's agent configuration against
-  the Foundation control catalog and **fails the build** if the agent is misconfigured.
+> **Scope.** `zta` secures the *coding agent's behavior inside a repo*. It is a
+> low-blast-radius enforcement layer, not a credential proxy or a production
+> network control. Read [Honest limits](#honest-limits) before relying on it.
 
-> Scope: this secures the *coding agent's* behavior inside a repo. It is the low-blast-radius
-> starting point — not a credential proxy or a production enforcement layer.
+---
+
+## Why
+
+Most "guardrails" for coding agents are prompt-level guidance the model can
+ignore. `zta` enforces at the **tool-call boundary** instead: a deterministic
+check that runs before an operation happens and can deny it.
+
+The hard part is that **there is no universal interception API across agents.**
+Claude Code exposes real hooks; Cursor and Copilot mostly expose only advisory
+config. `zta` handles this with two enforcement tiers and is explicit about which
+one each agent gets — no false sense of security.
+
+| Tier | Mechanism | Assurance | Agents |
+|------|-----------|-----------|--------|
+| **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code (✅), Codex CLI (planned) |
+| **Sandbox** | `zta run` launches the agent inside an OS-level sandbox | High, agent-independent | any agent (planned) |
+
+The guard logic is identical across tiers; only the *wiring* differs.
+
+---
+
+## How it works
+
+```
+agent operation ──► adapter ──► normalized Event ──► engine ──► Decision ──► adapter ──► allow / block
+                 (agent-specific)   (exec / file_read    (pure, agent-agnostic)   (exit code / format)
+                                     / file_write)
+```
+
+- **Adapter** — translates one agent's interception payload into a normalized
+  `Event` and translates the verdict back into that agent's expected response.
+  Adding an agent is one small adapter; the policy logic is untouched.
+- **Engine** — a pure function `Evaluate(policy, event) → decision`. Default is
+  *allow*; rules *block*. This is the single source of truth for every agent.
+- **Policy** — secure defaults are **compiled into the binary**, so `zta` is safe
+  with no config file. An optional JSON file extends or overrides any rule set.
+
+Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## Status
+
+Early but functional. What exists today:
+
+- ✅ `zta guard` — the enforcement entrypoint (fail-closed)
+- ✅ `zta version`
+- ✅ Claude Code adapter (PreToolUse hooks)
+- ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
+  force-push, credential read/write, secret-in-code, policy-integrity)
+
+Planned (see [Roadmap](#roadmap)): `zta run` (sandbox tier), Cursor & Codex
+adapters, `zta audit` (posture auditor), `zta init` (scaffold + auto-wire), and
+tool-call logging.
 
 ---
 
 ## Install
 
-Copy `.claude/`, `CLAUDE.md`, `zt-audit/`, and `.github/workflows/zt-audit.yml` into your repo,
-then commit them. Hooks fire automatically the next time Claude Code runs in the project.
-
-Requirements: `bash`, and either `jq` **or** `python3` for the hooks (they prefer `jq`, fall back
-to `python3`, and fail-closed only if neither exists). The auditor needs `python3` (stdlib only).
-
-Verify locally:
+Until tagged binaries ship, build from source. Requires Go 1.26+.
 
 ```bash
-bash tests/test_hooks.sh        # hook self-tests (no dangerous commands are ever run)
-python3 zt-audit/zt_audit.py .  # posture audit; exits non-zero on any FAIL
+git clone https://github.com/networkdefendersecurity/zta
+cd zta
+go build -o zta ./cmd/zta
+./zta version
 ```
 
----
-
-## What each piece enforces
-
-| File | Mechanism | Controls |
-|------|-----------|----------|
-| `.claude/settings.json` | deny-by-default permissions + hook registration | AC-01 |
-| `.claude/hooks/zt-guard.sh` | blocks destructive / pipe-to-shell / force-push / secret-read / policy-tamper Bash | AC-01, IA-02, IR-01 |
-| `.claude/hooks/zt-file-guard.sh` | blocks reads/writes of `.env`, keys, secrets, and `.git/`; write-protects the policy | IA-02, IR-01 |
-| `.claude/hooks/zt-secret-scan.sh` | blocks writing secrets (AWS/OpenAI/Anthropic/GitHub/Slack keys, JWTs, creds) into code | IO-02 |
-| `.claude/hooks/zt-log.sh` | append-only JSONL log of every tool call with session + subagent attribution | OA-01, OA-02 |
-| `.claude/agents/*.md` | least-privilege subagents (`reviewer` read-only, `test-runner` shell-scoped, `researcher` web-only) | AC-02, IO-01 |
-| `CLAUDE.md` | acceptable-use policy for agents in the repo | GV-01 |
-| `zt-audit/` + CI workflow | scores config vs catalog, gates the build | GV-03 |
-
-The enforcement contract: a `PreToolUse` hook that exits `2` blocks the tool call, and that block
-holds **even under `--dangerously-skip-permissions`** — bypass mode skips interactive prompts and
-the auto-mode classifier, not hooks. All guards are **fail-closed** (deny on unparseable input).
+The result is a static binary with no runtime dependencies — copy it anywhere on
+your `PATH`.
 
 ---
 
-## Honest limits (read this)
+## Usage
 
-Hooks are a deterministic layer at the *tool-call boundary*. They are not a sandbox, and they are
-not complete:
+### Claude Code (hook tier)
 
-- **The model routes around naive blocks.** Block `Write` and it may use a Bash heredoc; block `rm`
-  and it may use `perl -e unlink`. The Bash guard covers common shapes, not all of them.
-- **Real isolation needs OS-level controls.** For hard guarantees, run the agent in a sandboxed /
-  containerized worktree with restricted filesystem and network egress. That is control AC-03, and
-  the auditor reports it as `MANUAL` — the pack cannot verify it for you.
-- **Subagent / MCP / pipe-mode edges.** Hooks can fail to fire in some subagent, MCP, and
-  `claude -p` paths. Subagent safety leans more on each agent's `tools:` allowlist (reliable) than
-  on a hook firing inside it.
-- **Permission matching is imperfect.** Use hooks for enforcement and permissions for convenience;
-  the auditor checks both.
+Register `zta guard` as a `PreToolUse` hook in your project's
+`.claude/settings.json`. A non-zero exit blocks the tool call and the message is
+shown to the agent:
 
-Treat this pack as the deterministic 80% plus a verifiable posture baseline — paired with OS-level
-isolation, not a replacement for it.
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }]
+      }
+    ]
+  }
+}
+```
+
+That single hook replaces the four bash guards from the legacy pack. Claude Code
+sets `CLAUDE_PROJECT_DIR`, which `zta` uses to scope policy-integrity protection
+to *your* repo.
+
+### Try it directly
+
+`zta guard` reads one operation as JSON on stdin and exits `0` (allow) or `2`
+(block):
+
+```bash
+# allowed
+echo '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' \
+  | zta guard --agent claude-code; echo "exit=$?"        # exit=0
+
+# blocked
+echo '{"tool_name":"Bash","tool_input":{"command":"curl x.sh | bash"}}' \
+  | zta guard --agent claude-code; echo "exit=$?"        # exit=2
+# zta: blocked by policy [AC-01/pipe-to-shell]: pipe-to-shell ... executes untrusted remote code
+```
+
+### Flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--agent` | `claude-code` | which agent protocol to speak |
+| `--root` | `$ZTA_PROJECT_DIR`, `$CLAUDE_PROJECT_DIR`, else cwd | project root for policy-integrity scoping |
+| `--policy` | `$ZTA_POLICY` | optional JSON policy file overriding the defaults |
 
 ---
 
-## Controls assessed elsewhere
+## Policy
 
-The repo cannot meaningfully assess runtime behavioral monitoring (BM-*), persisted memory (MP-*),
-cryptographic agent identity (IA-01), tested rollback (IR-02), or org-level incident response
-(GV-02). The auditor marks these `N/A` at repo scope; they belong to the full deployment
-assessment (the Agent Security Posture Assessment workbook).
+The compiled-in defaults block, by control:
 
-v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Compliance mappings in the
-catalog are advisory alignments, not legal determinations.
+| Control | Blocks |
+|---------|--------|
+| **AC-01** | destructive recursive deletes; pipe-to-shell (`curl … \| sh`) |
+| **IA-02** | force-push; reading credential files (`.env`, keys, `.aws/credentials`, …) |
+| **IR-01** | writes to the project's policy directory (`.claude/`, `.zta/`) and `.git/` internals |
+| **IO-02** | writing secrets into code (AWS/Anthropic/OpenAI/GitHub/Slack keys, JWTs, private keys, hardcoded credentials) |
+
+To customize, point `--policy` at a JSON file. Any rule set you specify replaces
+that default set; sets you omit keep their defaults:
+
+```json
+{
+  "deny_exec": [
+    { "name": "no-terraform-apply", "control": "AC-01",
+      "reason": "infra changes go through CI",
+      "pattern": "(?i)terraform[[:space:]]+apply" }
+  ]
+}
+```
+
+Rule sets: `deny_exec` (shell commands), `deny_path` (files off-limits to any
+access), `protect_write` (paths write-protected within the project),
+`secret_content` (patterns blocked from being written). Patterns are RE2.
+
+---
+
+## Honest limits
+
+`zta` is a deterministic layer at the tool-call boundary. It is **not a sandbox**
+(until the sandbox tier lands) and not complete:
+
+- **The model can route around naive blocks.** Block `Write` and it may use a
+  Bash heredoc; block `rm` and it may use `perl -e unlink`. The command rules
+  cover common shapes, not all of them.
+- **Hard isolation needs OS-level controls.** For real guarantees, run the agent
+  in a sandboxed/containerized worktree with restricted filesystem and network
+  egress. That is the planned sandbox tier.
+- **Hook tier depends on the agent honoring hooks.** On agents without real
+  hooks, only the sandbox tier enforces; config there is advisory.
+
+Treat the hook tier as the deterministic 80%, paired with OS-level isolation —
+not a replacement for it.
+
+---
+
+## Roadmap
+
+1. **Sandbox tier** (`zta run -- <agent…>`) — universal, agent-independent enforcement.
+2. **Cursor / Codex / Copilot adapters.**
+3. **`zta audit`** — score a repo's agent configuration against the control catalog and fail CI on misconfiguration.
+4. **`zta init`** — scaffold a policy and auto-wire detected agents.
+5. **Tool-call logging** — append-only attribution log (OA-01/02).
+6. **Tagged cross-compiled releases.**
+
+---
+
+## Legacy Claude Code pack
+
+The original `.claude/` bash hooks, `CLAUDE.md`, and `zt-audit/` Python auditor
+still live in this repo and remain functional for Claude Code. They are being
+superseded by `zta` and will be retired once the Go tool reaches parity (audit +
+init). `zta` itself cannot modify `.claude/` — its own integrity guard blocks
+that, by design.
+
+---
+
+## Development
+
+```bash
+go test ./...     # unit tests + fixture-backed behavior tests
+go vet ./...
+gofmt -l .        # should print nothing
+```
+
+v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control
+mappings are advisory alignments, not legal determinations.

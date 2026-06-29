@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/networkdefendersecurity/zta/internal/adapter"
@@ -54,7 +55,7 @@ func usage() {
 Usage:
   zta init [--agent NAME] [--dir DIR] [--policy] [--dry-run]   wire enforcement into a repo
   zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin (hook tier)
-  zta run [--root DIR] [--policy FILE] -- <command...>    launch a command in the sandbox tier
+  zta run [--backend shim|docker] [--image IMG] -- <cmd...>  launch a command in the sandbox tier
   zta audit [DIR] [--strict]                              score agent config against the control catalog
   zta version                                             print version
   zta help                                                show this help
@@ -141,27 +142,73 @@ func cmdGuard(args []string) {
 	os.Exit(a.Respond(os.Stderr, d))
 }
 
-// cmdRun launches a command in the sandbox tier: a shim PATH that routes
-// execution of risky binaries back through the policy engine. Use for agents
-// that expose no native hook. Everything after `--` is the command to run.
+// cmdRun launches a command in the sandbox tier. The default `shim` backend puts
+// a shim PATH in front of the command so execution routes through the engine;
+// the `docker` backend additionally isolates the agent in a hardened container.
+// Everything after `--` is the command to run.
 func cmdRun(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	root := fs.String("root", defaultRoot(), "project root used to scope policy-integrity protection")
 	policyFile := fs.String("policy", os.Getenv("ZTA_POLICY"), "optional JSON policy file overriding defaults")
+	backend := fs.String("backend", "shim", "enforcement backend: shim | docker")
+	image := fs.String("image", "", "container image (docker backend)")
+	network := fs.String("network", "none", "container network mode (docker backend)")
+	maskSecrets := fs.Bool("mask-secrets", true, "mask repo secret files inside the container (docker backend)")
+	tty := fs.Bool("tty", false, "allocate a pseudo-TTY in the container (docker backend; for interactive agents)")
+	var mounts stringSlice
+	fs.Var(&mounts, "mount", "extra `-v` mount spec for the container; repeatable (docker backend)")
 	fs.Parse(args)
 
 	cmd := fs.Args()
 	if len(cmd) == 0 {
-		fmt.Fprintln(os.Stderr, "zta run: nothing to run\nusage: zta run [--root DIR] [--policy FILE] -- <command...>")
+		fmt.Fprintln(os.Stderr, "zta run: nothing to run\nusage: zta run [--backend shim|docker] [flags] -- <command...>")
 		os.Exit(2)
 	}
 
-	code, err := sandbox.Run(cmd, sandbox.Options{PolicyFile: *policyFile, Root: *root})
+	var code int
+	var err error
+	switch *backend {
+	case "shim", "":
+		code, err = sandbox.Run(cmd, sandbox.Options{PolicyFile: *policyFile, Root: *root})
+	case "docker":
+		code, err = sandbox.RunDocker(cmd, sandbox.DockerOptions{
+			Image:       *image,
+			Root:        absPath(*root),
+			Network:     *network,
+			PolicyFile:  absPath(*policyFile),
+			ExtraMounts: mounts,
+			MaskSecrets: *maskSecrets,
+			TTY:         *tty,
+		})
+	default:
+		fmt.Fprintf(os.Stderr, "zta run: unknown backend %q (use shim or docker)\n", *backend)
+		os.Exit(2)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zta run: %v\n", err)
 		os.Exit(2)
 	}
 	os.Exit(code)
+}
+
+// stringSlice collects a repeatable string flag.
+type stringSlice []string
+
+func (s *stringSlice) String() string { return strings.Join(*s, ", ") }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// absPath resolves p to an absolute path, leaving "" untouched.
+func absPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
 
 // cmdAudit scores a repository's agent configuration against the Foundation

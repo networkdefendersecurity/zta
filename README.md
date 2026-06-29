@@ -28,7 +28,8 @@ one each agent gets — no false sense of security.
 | Tier | Mechanism | Assurance | Agents |
 |------|-----------|-----------|--------|
 | **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code (✅), Codex CLI (planned) |
-| **Sandbox** | `zta run` launches the agent with a shim PATH that routes command execution through the engine | Catches commands the agent runs (any agent) | ✅ any agent |
+| **Sandbox (shim)** | `zta run` launches the agent with a shim PATH that routes command execution through the engine | Catches commands the agent runs (any agent) | ✅ any agent |
+| **Sandbox (container)** | `zta run --backend=docker` isolates the agent in a hardened container; the shim runs inside | Kernel-enforced: host FS/creds absent, network restricted, secrets masked, command policy still applied | ✅ any agent (needs Docker) |
 
 The guard logic is identical across tiers; only the *wiring* differs.
 
@@ -60,15 +61,14 @@ Early but functional. What exists today:
 
 - ✅ `zta init` — wire enforcement into a repo (idempotent, with dry-run)
 - ✅ `zta guard` — hook-tier enforcement entrypoint (fail-closed)
-- ✅ `zta run` — sandbox-tier launcher for agents without hooks
+- ✅ `zta run` — sandbox-tier launcher (shim or hardened-container backend)
 - ✅ `zta audit` — posture auditor; scores config vs the control catalog, gates CI
 - ✅ `zta version`
 - ✅ Claude Code adapter (PreToolUse hooks)
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
 
-Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, tool-call logging, and
-a container backend for kernel-level isolation.
+Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, and tool-call logging.
 
 ---
 
@@ -142,6 +142,21 @@ zta run -- bash                  # even a plain shell is now guarded
 A blocked command fails with exit `126` and a reason on stderr; everything else
 runs normally. This intercepts the shell (so full pipelines like `curl … | bash`
 are caught) plus a default set of high-risk binaries.
+
+For stronger, kernel-enforced isolation, add `--backend=docker` (requires Docker):
+
+```bash
+zta run --backend=docker --image=my-dev-image -- aider
+```
+
+The agent runs in a container as your user with **only the project mounted** —
+the host home, `~/.ssh`, `~/.aws`, and the rest of the host filesystem are absent.
+`--network none` (default; override with `--network`) blocks exfil and remote
+code download, repo-local secret files (`.env`, `*.key`, …) are masked so even a
+raw read returns nothing, and the shim still applies command policy inside. This
+closes the shim tier's gap: file reads the agent performs via its own syscalls,
+not just commands. Use `--tty` for interactive agents and `--mount` for extra
+volumes.
 
 ### Audit posture (CI gate)
 
@@ -217,20 +232,22 @@ access), `protect_write` (paths write-protected within the project),
 
 ## Honest limits
 
-`zta` is a deterministic layer at the tool-call boundary. Even with the sandbox
-tier, it is **not full OS isolation** and not complete:
+`zta` is a deterministic layer at the tool-call boundary. The `docker` backend
+adds real OS isolation, but the default (hook / shim) path is **not a sandbox**,
+and nothing here is complete:
 
 - **The model can route around naive blocks.** Block `Write` and it may use a
   Bash heredoc; block `rm` and it may use `perl -e unlink`. The command rules
   cover common shapes, not all of them.
-- **The sandbox tier intercepts *commands*, not raw syscalls.** `zta run`
-  evaluates what the agent executes through the shell and shimmed binaries. It
-  does **not** trap file reads/writes the agent's own process performs directly
-  (e.g. an agent that opens `.env` via a syscall rather than running `cat`). For
-  that, use the hook tier or the planned container backend.
-- **Hard isolation needs the kernel.** For guarantees against a determined
-  process, run the agent in a container/namespaced worktree with restricted
-  filesystem and network egress — the planned container backend for `zta run`.
+- **The shim backend intercepts *commands*, not raw syscalls.** It evaluates what
+  the agent executes through the shell and shimmed binaries, but does **not** trap
+  file reads/writes the agent's own process performs directly (e.g. opening `.env`
+  via a syscall rather than running `cat`). For that, use the hook tier or the
+  `docker` backend, which removes host credentials from the filesystem entirely.
+- **The container backend depends on Docker** and on you supplying an image with
+  your agent's toolchain. It hardens the host boundary (FS/creds/network); within
+  the mounted `/workspace`, destructive deletes of specific subpaths are still
+  possible (recoverable via git) since the delete rule targets broad/system paths.
 - **Hook tier depends on the agent honoring hooks.** On agents without real
   hooks, use the sandbox tier instead.
 
@@ -241,10 +258,9 @@ replacement for it.
 
 ## Roadmap
 
-1. **Container backend for `zta run`** — kernel-level filesystem/network isolation (catches raw syscalls, not just commands).
-2. **Cursor / Codex / Copilot adapters.**
-3. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
-4. **Tagged cross-compiled releases.**
+1. **Cursor / Codex / Copilot adapters.**
+2. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
+3. **Tagged cross-compiled releases.**
 
 ---
 

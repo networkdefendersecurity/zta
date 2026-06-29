@@ -114,9 +114,10 @@ No engine or policy changes are required.
 | Tier | How it intercepts | Assurance |
 |------|-------------------|-----------|
 | **Hook** | the agent invokes `zta guard` before each tool call | High where the agent has real, blocking hooks (Claude Code) |
-| **Sandbox** | `zta run` launches the agent with a shim `PATH` that routes command execution through the engine | Catches commands the agent runs, regardless of cooperation |
+| **Sandbox / shim** | `zta run` launches the agent with a shim `PATH` that routes command execution through the engine | Catches commands the agent runs, regardless of cooperation |
+| **Sandbox / container** | `zta run --backend=docker` isolates the agent in a hardened container with the shim running inside | Kernel-enforced host/network isolation plus command policy |
 
-Both tiers funnel through the same engine. The sandbox tier is the answer for
+All tiers funnel through the same engine. The sandbox tiers are the answer for
 agents (Cursor, Copilot) whose only native controls are advisory.
 
 ### Sandbox tier (`zta run`)
@@ -142,11 +143,35 @@ agents (Cursor, Copilot) whose only native controls are advisory.
 
 Fail-closed: a shim that cannot load the policy blocks the command.
 
-**Boundary.** The sandbox tier intercepts *command execution*, not the agent's
+**Boundary.** The shim backend intercepts *command execution*, not the agent's
 own syscalls. File reads/writes the agent process performs directly (not via a
-shimmed command) are out of scope here — they belong to the hook tier or the
-planned container backend, which would run the agent under kernel-enforced
-filesystem/network restrictions.
+shimmed command) are out of scope for it — that is what the container backend
+addresses.
+
+### Container backend (`zta run --backend=docker`)
+
+`internal/sandbox/docker.go` runs the agent inside a hardened Docker container.
+`dockerArgs` is a pure function (unit-tested without a daemon) that builds the
+`docker run` invocation; `RunDocker` resolves the host context and execs it:
+
+- **Only the project root is mounted** at `/workspace` — the host home,
+  `~/.ssh`, `~/.aws`, and the rest of the host filesystem are simply not present.
+  This is what closes the raw-syscall read gap.
+- **Runs as the host uid:gid** (`--user`), so the agent is non-root in the
+  container and the bind mount keeps correct ownership (which is why dropping
+  `CAP_DAC_OVERRIDE` is fine).
+- **Hardened**: `--network none` by default, `--cap-drop ALL`,
+  `--security-opt no-new-privileges`.
+- **Repo secrets are masked**: a bounded walk finds files that look like
+  credentials (`.env`, `*.key`, `*.pem`, …) and mounts an empty file over each,
+  so even a direct read returns nothing.
+- **The shim tier runs inside**: the static `zta` binary is mounted read-only and
+  set as the entrypoint (`zta run` wraps the agent), so command policy still
+  applies — important because `/workspace` is writable.
+
+Layered result: Docker provides kernel-enforced host/network isolation; the
+nested shim keeps command-level policy. The backend needs a daemon and a
+user-supplied image carrying the agent's toolchain.
 
 ## The `guard` command
 

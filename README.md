@@ -20,14 +20,16 @@ Most "guardrails" for coding agents are prompt-level guidance the model can
 ignore. `zta` enforces at the **tool-call boundary** instead: a deterministic
 check that runs before an operation happens and can deny it.
 
-The hard part is that **there is no universal interception API across agents.**
-Claude Code exposes real hooks; Cursor and Copilot mostly expose only advisory
-config. `zta` handles this with two enforcement tiers and is explicit about which
-one each agent gets — no false sense of security.
+The hard part is that **there is no universal interception API across agents** —
+hook payload shapes and deny signals differ, and some agents have no hook at all.
+`zta` handles this with two enforcement tiers and is explicit about which one
+each agent gets — no false sense of security. (As of 2026, Claude Code, Codex,
+Cursor, and Copilot all expose a real *blocking* pre-tool hook; each adapter
+speaks that agent's exact protocol.)
 
 | Tier | Mechanism | Assurance | Agents |
 |------|-----------|-----------|--------|
-| **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code (✅), Codex CLI (planned) |
+| **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code, Codex, Cursor, Copilot (✅) |
 | **Sandbox (shim)** | `zta run` launches the agent with a shim PATH that routes command execution through the engine | Catches commands the agent runs (any agent) | ✅ any agent |
 | **Sandbox (container)** | `zta run --backend=docker` isolates the agent in a hardened container; the shim runs inside | Kernel-enforced: host FS/creds absent, network restricted, secrets masked, command policy still applied | ✅ any agent (needs Docker) |
 
@@ -64,11 +66,12 @@ Early but functional. What exists today:
 - ✅ `zta run` — sandbox-tier launcher (shim or hardened-container backend)
 - ✅ `zta audit` — posture auditor; scores config vs the control catalog, gates CI
 - ✅ `zta version`
-- ✅ Claude Code adapter (PreToolUse hooks)
+- ✅ Hook adapters: Claude Code, Codex, Cursor, Copilot (each speaks its native
+  hook protocol and deny format)
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
 
-Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, and tool-call logging.
+Planned (see [Roadmap](#roadmap)): tool-call logging, and tagged releases.
 
 ---
 
@@ -126,6 +129,23 @@ shown to the agent:
 That single hook replaces the four bash guards from the legacy pack. Claude Code
 sets `CLAUDE_PROJECT_DIR`, which `zta` uses to scope policy-integrity protection
 to *your* repo.
+
+### Codex, Cursor, Copilot (hook tier)
+
+`zta init --agent <name>` writes each agent's native hook config — Codex's
+`.codex/hooks.json`, Cursor's `.cursor/hooks.json`, or Copilot's
+`.github/hooks/zta.json` — pointing at `zta guard --agent <name>`. Each adapter
+emits that agent's exact deny signal (Codex: exit 2 + stderr; Cursor:
+`{"permission":"deny"}`; Copilot: `{"permissionDecision":"deny"}`).
+
+```bash
+zta init --agent codex     # or cursor, copilot
+```
+
+> Hook coverage and schemas vary by version (e.g. Codex's PreToolUse sees only
+> some shell paths). After wiring, **verify enforcement** by attempting a denied
+> command and confirming `zta` blocks it; pair with the sandbox tier for defense
+> in depth.
 
 ### Any agent (sandbox tier)
 
@@ -258,9 +278,8 @@ replacement for it.
 
 ## Roadmap
 
-1. **Cursor / Codex / Copilot adapters.**
-2. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
-3. **Tagged cross-compiled releases.**
+1. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
+2. **Tagged cross-compiled releases.**
 
 ---
 

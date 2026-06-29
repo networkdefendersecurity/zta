@@ -24,8 +24,33 @@ type Adapter interface {
 	// ErrPassthrough for events the guard does not gate.
 	Parse(r io.Reader) (*policy.Event, error)
 	// Respond emits the decision in the agent's expected format and returns the
-	// process exit code the agent interprets (0 allow, non-zero block).
-	Respond(w io.Writer, d policy.Decision) int
+	// process exit code the agent interprets (0 allow, non-zero block). Some
+	// agents read the verdict from a JSON object on stdout, others from a
+	// message on stderr plus the exit code, so both streams are provided.
+	Respond(stdout, stderr io.Writer, d policy.Decision) int
+}
+
+// ClaudeStyleEvent maps the Claude Code / Codex hook schema — a tool_name plus a
+// tool_input object — to a normalized Event. It returns ErrPassthrough for tools
+// the policy does not gate. Shared by the claude-code and codex adapters.
+func ClaudeStyleEvent(agent, toolName string, toolInput map[string]any) (*policy.Event, error) {
+	get := func(k string) string { s, _ := toolInput[k].(string); return s }
+	ev := &policy.Event{Agent: agent, Raw: toolInput}
+	switch toolName {
+	case "Bash":
+		ev.Action, ev.Command = policy.ActionExec, get("command")
+	case "Read":
+		ev.Action, ev.Path = policy.ActionFileRead, get("file_path")
+	case "Write":
+		ev.Action, ev.Path, ev.Content = policy.ActionFileWrite, get("file_path"), get("content")
+	case "Edit":
+		ev.Action, ev.Path, ev.Content = policy.ActionFileWrite, get("file_path"), get("new_string")
+	case "NotebookEdit":
+		ev.Action, ev.Path, ev.Content = policy.ActionFileWrite, get("notebook_path"), get("new_source")
+	default:
+		return nil, ErrPassthrough
+	}
+	return ev, nil
 }
 
 var registry = map[string]Adapter{}

@@ -13,6 +13,9 @@ import (
 
 	"github.com/networkdefendersecurity/zta/internal/adapter"
 	_ "github.com/networkdefendersecurity/zta/internal/adapter/claudecode"
+	_ "github.com/networkdefendersecurity/zta/internal/adapter/codex"
+	_ "github.com/networkdefendersecurity/zta/internal/adapter/copilot"
+	_ "github.com/networkdefendersecurity/zta/internal/adapter/cursor"
 	"github.com/networkdefendersecurity/zta/internal/audit"
 	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
@@ -139,7 +142,7 @@ func cmdGuard(args []string) {
 	}
 
 	d := engine.Evaluate(pol, ev)
-	os.Exit(a.Respond(os.Stderr, d))
+	os.Exit(a.Respond(os.Stdout, os.Stderr, d))
 }
 
 // cmdRun launches a command in the sandbox tier. The default `shim` backend puts

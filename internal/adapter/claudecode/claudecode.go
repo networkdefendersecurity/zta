@@ -30,41 +30,14 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 	if err := json.NewDecoder(r).Decode(&in); err != nil {
 		return nil, fmt.Errorf("decode hook payload: %w", err)
 	}
-	str := func(k string) string {
-		s, _ := in.ToolInput[k].(string)
-		return s
-	}
-
-	ev := &policy.Event{Agent: "claude-code", Raw: in.ToolInput}
-	switch in.ToolName {
-	case "Bash":
-		ev.Action = policy.ActionExec
-		ev.Command = str("command")
-	case "Read":
-		ev.Action = policy.ActionFileRead
-		ev.Path = str("file_path")
-	case "Write":
-		ev.Action = policy.ActionFileWrite
-		ev.Path = str("file_path")
-		ev.Content = str("content")
-	case "Edit":
-		ev.Action = policy.ActionFileWrite
-		ev.Path = str("file_path")
-		ev.Content = str("new_string")
-	case "NotebookEdit":
-		ev.Action = policy.ActionFileWrite
-		ev.Path = str("notebook_path")
-		ev.Content = str("new_source")
-	default:
-		return nil, adapter.ErrPassthrough
-	}
-	return ev, nil
+	return adapter.ClaudeStyleEvent("claude-code", in.ToolName, in.ToolInput)
 }
 
-func (Adapter) Respond(w io.Writer, d policy.Decision) int {
+func (Adapter) Respond(stdout, stderr io.Writer, d policy.Decision) int {
 	if d.Allow {
 		return 0
 	}
-	fmt.Fprintf(w, "zta: blocked by policy [%s/%s]: %s\n", d.Control, d.Rule, d.Reason)
+	// Claude Code feeds the hook's stderr back to the model on a non-zero exit.
+	fmt.Fprintf(stderr, "zta: blocked by policy [%s/%s]: %s\n", d.Control, d.Rule, d.Reason)
 	return 2
 }

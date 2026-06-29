@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/networkdefendersecurity/zta/internal/policy"
@@ -104,18 +105,56 @@ func TestInit_PolicyScaffoldIsValid(t *testing.T) {
 	}
 }
 
-func TestInit_NonHookableAgentGuidance(t *testing.T) {
+func TestInit_SandboxOnlyAgentGuidance(t *testing.T) {
 	dir := t.TempDir()
-	plan, err := BuildPlan(Options{Dir: dir, Agent: "cursor"})
+	plan, err := BuildPlan(Options{Dir: dir, Agent: "windsurf"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Notes) == 0 {
 		t.Fatal("expected sandbox-tier guidance for a non-hookable agent")
 	}
-	// must not have wired a settings.json
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
-		t.Error("cursor init should not write .claude/settings.json")
+	for _, f := range []string{".claude/settings.json", ".cursor/hooks.json", ".codex/hooks.json"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Errorf("windsurf init should not write %s", f)
+		}
+	}
+}
+
+func TestInit_HookableAgents(t *testing.T) {
+	cases := []struct{ agent, cfg string }{
+		{"codex", ".codex/hooks.json"},
+		{"cursor", ".cursor/hooks.json"},
+		{"copilot", ".github/hooks/zta.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent, func(t *testing.T) {
+			dir := t.TempDir()
+			plan, err := BuildPlan(Options{Dir: dir, Agent: tc.agent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := plan.Apply(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, tc.cfg)
+			if !containsZtaGuard(readJSON(t, path)) {
+				t.Fatalf("%s: %s missing a zta guard command", tc.agent, tc.cfg)
+			}
+			before, _ := os.ReadFile(path)
+			if !strings.Contains(string(before), "--agent "+tc.agent) {
+				t.Errorf("%s: command does not target the agent: %s", tc.agent, before)
+			}
+			// idempotent
+			second, _ := BuildPlan(Options{Dir: dir, Agent: tc.agent})
+			if err := second.Apply(); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(path)
+			if string(before) != string(after) {
+				t.Errorf("%s: init not idempotent", tc.agent)
+			}
+		})
 	}
 }
 
@@ -135,9 +174,7 @@ func readJSON(t *testing.T, path string) map[string]any {
 }
 
 func wiredHasGuard(cfg map[string]any) bool {
-	hooks, _ := cfg["hooks"].(map[string]any)
-	pre, _ := hooks["PreToolUse"].([]any)
-	return hasZtaGuard(pre)
+	return containsZtaGuard(cfg)
 }
 
 func hasSkip(changes []Change, suffix string) bool {

@@ -38,13 +38,11 @@ type Plan struct {
 	writes map[string][]byte // absolute path -> content to write on Apply
 }
 
-// nonHookable agents have no enforceable pre-tool-call hook; they are guided to
-// the sandbox tier instead.
-var nonHookable = map[string]string{
-	"cursor":   "Cursor",
+// sandboxOnly agents have no enforceable pre-tool-call hook; they are guided to
+// the sandbox tier instead. (Cursor, Codex, and Copilot gained blocking hooks in
+// 2025–2026 and are wired directly; Windsurf has no documented blocking hook.)
+var sandboxOnly = map[string]string{
 	"windsurf": "Windsurf",
-	"copilot":  "GitHub Copilot",
-	"codex":    "Codex CLI",
 }
 
 // BuildPlan computes the changes for an init run without writing anything.
@@ -57,19 +55,38 @@ func BuildPlan(opts Options) (*Plan, error) {
 	}
 	p := &Plan{writes: map[string][]byte{}}
 
+	dir := opts.Dir
 	switch opts.Agent {
 	case "claude-code":
-		if err := p.wireClaude(opts); err != nil {
+		// Claude Code: PreToolUse hooks in .claude/settings.json.
+		if err := p.wireClaudeStyle(filepath.Join(dir, ".claude", "settings.json"), "claude-code", "Bash|Read|Edit|Write|NotebookEdit", opts); err != nil {
 			return nil, err
 		}
+	case "codex":
+		// Codex: Claude-compatible PreToolUse hooks in .codex/hooks.json.
+		if err := p.wireClaudeStyle(filepath.Join(dir, ".codex", "hooks.json"), "codex", "Bash|apply_patch", opts); err != nil {
+			return nil, err
+		}
+		p.Notes = append(p.Notes, verifyNote("Codex"))
+	case "cursor":
+		// Cursor: per-event hooks in .cursor/hooks.json.
+		if err := p.wireEventHooks(filepath.Join(dir, ".cursor", "hooks.json"), "cursor", []string{"beforeShellExecution", "preToolUse", "beforeReadFile"}, opts); err != nil {
+			return nil, err
+		}
+		p.Notes = append(p.Notes, verifyNote("Cursor"))
+	case "copilot":
+		// Copilot CLI: preToolUse hook in .github/hooks/zta.json.
+		if err := p.wireEventHooks(filepath.Join(dir, ".github", "hooks", "zta.json"), "copilot", []string{"preToolUse"}, opts); err != nil {
+			return nil, err
+		}
+		p.Notes = append(p.Notes, verifyNote("Copilot"))
 	default:
-		if label, ok := nonHookable[opts.Agent]; ok {
+		if label, ok := sandboxOnly[opts.Agent]; ok {
 			p.Notes = append(p.Notes, fmt.Sprintf(
 				"%s has no enforceable pre-tool-call hook. Run it under the sandbox tier:\n    zta run -- %s",
 				label, opts.Agent))
 		} else {
-			return nil, fmt.Errorf("unknown agent %q (known: claude-code, %s)",
-				opts.Agent, strings.Join(sortedKeys(nonHookable), ", "))
+			return nil, fmt.Errorf("unknown agent %q (known: claude-code, codex, cursor, copilot, windsurf)", opts.Agent)
 		}
 	}
 
@@ -102,17 +119,17 @@ func (p *Plan) Apply() error {
 	return nil
 }
 
-// wireClaude merges a `zta guard` PreToolUse hook into .claude/settings.json,
-// preserving any existing configuration.
-func (p *Plan) wireClaude(opts Options) error {
-	path := filepath.Join(opts.Dir, ".claude", "settings.json")
-	cfg := map[string]any{}
-	existed := false
-	if b, err := os.ReadFile(path); err == nil {
-		existed = true
-		if err := json.Unmarshal(b, &cfg); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
-		}
+// wireClaudeStyle merges a `zta guard` PreToolUse hook into a Claude-Code-style
+// config (Claude Code's settings.json or Codex's hooks.json), preserving any
+// existing configuration. Groups have the shape {matcher, hooks:[{type,command}]}.
+func (p *Plan) wireClaudeStyle(path, agent, matcher string, opts Options) error {
+	cfg, existed, err := loadJSONObject(path)
+	if err != nil {
+		return err
+	}
+	if containsZtaGuard(cfg) && !opts.Force {
+		p.Changes = append(p.Changes, Change{path, "skip", "zta guard hook already present"})
+		return nil
 	}
 
 	hooks, _ := cfg["hooks"].(map[string]any)
@@ -120,38 +137,80 @@ func (p *Plan) wireClaude(opts Options) error {
 		hooks = map[string]any{}
 	}
 	pre, _ := hooks["PreToolUse"].([]any)
-
-	if hasZtaGuard(pre) && !opts.Force {
-		p.Changes = append(p.Changes, Change{path, "skip", "zta guard hook already present"})
-		return nil
-	}
-	if opts.Force {
-		pre = withoutZtaGuard(pre)
-	}
-
+	pre = withoutZtaGuard(pre)
 	pre = append(pre, map[string]any{
-		"matcher": "Bash|Read|Edit|Write|NotebookEdit",
-		"hooks": []any{map[string]any{
-			"type":    "command",
-			"command": "zta guard --agent claude-code",
-		}},
+		"matcher": matcher,
+		"hooks":   []any{map[string]any{"type": "command", "command": guardCmd(agent)}},
 	})
 	hooks["PreToolUse"] = pre
 	cfg["hooks"] = hooks
 
+	return p.record(path, cfg, existed, "wire zta guard PreToolUse hook")
+}
+
+// wireEventHooks merges a `zta guard` command into per-event hook arrays for
+// agents whose config shape is {version, hooks:{<event>:[{type,command}]}}
+// (Cursor, Copilot).
+func (p *Plan) wireEventHooks(path, agent string, events []string, opts Options) error {
+	cfg, existed, err := loadJSONObject(path)
+	if err != nil {
+		return err
+	}
+	if containsZtaGuard(cfg) && !opts.Force {
+		p.Changes = append(p.Changes, Change{path, "skip", "zta guard hook already present"})
+		return nil
+	}
+
+	if _, ok := cfg["version"]; !ok {
+		cfg["version"] = 1
+	}
+	hooks, _ := cfg["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	for _, ev := range events {
+		arr, _ := hooks[ev].([]any)
+		arr = withoutZtaEntries(arr)
+		hooks[ev] = append(arr, map[string]any{"type": "command", "command": guardCmd(agent)})
+	}
+	cfg["hooks"] = hooks
+
+	return p.record(path, cfg, existed, "wire zta guard hook for "+strings.Join(events, ", "))
+}
+
+// record marshals cfg and queues the write as a create/update change.
+func (p *Plan) record(path string, cfg map[string]any, existed bool, detail string) error {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	out = append(out, '\n')
-
 	action := "create"
 	if existed {
 		action = "update"
 	}
-	p.writes[path] = out
-	p.Changes = append(p.Changes, Change{path, action, "wire zta guard PreToolUse hook"})
+	p.writes[path] = append(out, '\n')
+	p.Changes = append(p.Changes, Change{path, action, detail})
 	return nil
+}
+
+func guardCmd(agent string) string { return "zta guard --agent " + agent }
+
+func verifyNote(label string) string {
+	return fmt.Sprintf("%s hook wired. Verify it actually blocks: attempt a denied command (e.g. a force-push) and confirm zta denies it — hook schemas vary by version.", label)
+}
+
+// loadJSONObject reads a JSON object file into a map, returning whether it
+// existed. A missing file yields an empty map.
+func loadJSONObject(path string) (map[string]any, bool, error) {
+	cfg := map[string]any{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return cfg, false, nil
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return nil, true, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return cfg, true, nil
 }
 
 // scaffoldClaudeMD writes a starter acceptable-use policy if none exists.
@@ -187,42 +246,47 @@ func (p *Plan) scaffoldPolicy(opts Options) error {
 	return nil
 }
 
-func hasZtaGuard(pre []any) bool {
-	for _, g := range pre {
-		if groupHasZtaGuard(g) {
+// containsZtaGuard reports whether any "command" value anywhere in the config
+// already invokes `zta guard`, making init idempotent across config shapes.
+func containsZtaGuard(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		if cmd, _ := t["command"].(string); strings.Contains(cmd, "zta guard") {
 			return true
+		}
+		for _, x := range t {
+			if containsZtaGuard(x) {
+				return true
+			}
+		}
+	case []any:
+		for _, x := range t {
+			if containsZtaGuard(x) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
+// withoutZtaGuard drops Claude-style PreToolUse groups that contain a zta guard.
 func withoutZtaGuard(pre []any) []any {
 	out := pre[:0:0]
 	for _, g := range pre {
-		if !groupHasZtaGuard(g) {
+		if !containsZtaGuard(g) {
 			out = append(out, g)
 		}
 	}
 	return out
 }
 
-func groupHasZtaGuard(group any) bool {
-	gm, _ := group.(map[string]any)
-	hs, _ := gm["hooks"].([]any)
-	for _, h := range hs {
-		hm, _ := h.(map[string]any)
-		if cmd, _ := hm["command"].(string); strings.Contains(cmd, "zta guard") {
-			return true
+// withoutZtaEntries drops flat per-event hook entries that invoke zta guard.
+func withoutZtaEntries(arr []any) []any {
+	out := arr[:0:0]
+	for _, e := range arr {
+		if !containsZtaGuard(e) {
+			out = append(out, e)
 		}
 	}
-	return false
-}
-
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }

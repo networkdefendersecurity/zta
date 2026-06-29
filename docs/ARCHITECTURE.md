@@ -89,14 +89,30 @@ ergonomic while letting power users replace a category wholesale.
 ```go
 type Adapter interface {
     Name() string
-    Parse(r io.Reader) (*policy.Event, error)   // normalize one payload
-    Respond(w io.Writer, d policy.Decision) int // emit verdict, return exit code
+    Parse(r io.Reader) (*policy.Event, error)            // normalize one payload
+    Respond(stdout, stderr io.Writer, d policy.Decision) int // emit verdict, return exit code
 }
 ```
 
 Adapters self-register in `init()`. `Parse` returns `adapter.ErrPassthrough` for
 operations the guard does not gate (e.g. a tool type with no policy implications),
-which the CLI treats as allow.
+which the CLI treats as allow. `Respond` receives both streams because agents
+disagree on where the verdict goes — some read a message from stderr plus the
+exit code, others read a JSON object from stdout.
+
+Four hook adapters ship, each speaking its agent's exact protocol (verified
+against 2026 docs):
+
+| Adapter | Input schema | Deny signal |
+|---------|--------------|-------------|
+| `claude-code` | `tool_name` + `tool_input` | exit 2 + reason on stderr |
+| `codex` | same as Claude (plus `apply_patch`) | exit 2 + reason on stderr |
+| `cursor` | `command` / `tool_name` / `file_path` per event | `{"permission":"deny"}` on stdout (+ exit 2) |
+| `copilot` | camelCase `toolName` + `toolArgs` | `{"permissionDecision":"deny"}` on stdout (+ exit 2) |
+
+Claude Code and Codex share `adapter.ClaudeStyleEvent`. Copilot's `toolArgs` key
+names vary by version, so it tries common keys and falls back to scanning all
+string values — a mis-guessed key must never let a dangerous command through.
 
 ### Adding an agent
 

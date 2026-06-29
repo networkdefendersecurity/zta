@@ -114,10 +114,39 @@ No engine or policy changes are required.
 | Tier | How it intercepts | Assurance |
 |------|-------------------|-----------|
 | **Hook** | the agent invokes `zta guard` before each tool call | High where the agent has real, blocking hooks (Claude Code) |
-| **Sandbox** *(planned)* | `zta run` launches the agent inside an OS-level sandbox so enforcement holds even if the agent ignores config | High, agent-independent |
+| **Sandbox** | `zta run` launches the agent with a shim `PATH` that routes command execution through the engine | Catches commands the agent runs, regardless of cooperation |
 
 Both tiers funnel through the same engine. The sandbox tier is the answer for
 agents (Cursor, Copilot) whose only native controls are advisory.
+
+### Sandbox tier (`zta run`)
+
+`zta run -- <command…>` (see `internal/sandbox`):
+
+1. Create a temp **shim directory** with an executable wrapper per target
+   binary — the shells plus high-risk tools (`rm`, `git`, `curl`, …). Each
+   wrapper is `exec zta __shim --name <tool> -- "$@"`.
+2. Launch the command with `PATH` = shim dir first, passing the original `PATH`
+   as `ZTA_REAL_PATH` so shims can find the real binaries without recursion.
+   `argv[0]` is resolved against the shim `PATH` explicitly, so the *top-level*
+   command is shimmed too (Go's `exec.Command` otherwise resolves it against the
+   parent `PATH`).
+3. On each intercepted call, `zta __shim` reconstructs the command and evaluates
+   it as an `exec` event:
+   - **Shell with `-c`** → the inner command string, so full pipelines like
+     `curl … | bash` are visible (this is why shells are the primary target).
+   - **Direct exec** → the tool name plus its arguments.
+4. **Blocked** → exit `126` with a reason on stderr (reads as a failed command).
+   **Allowed** → `syscall.Exec` replaces the shim with the real binary and its
+   original, unmodified argv, so execution is faithful.
+
+Fail-closed: a shim that cannot load the policy blocks the command.
+
+**Boundary.** The sandbox tier intercepts *command execution*, not the agent's
+own syscalls. File reads/writes the agent process performs directly (not via a
+shimmed command) are out of scope here — they belong to the hook tier or the
+planned container backend, which would run the agent under kernel-enforced
+filesystem/network restrictions.
 
 ## The `guard` command
 

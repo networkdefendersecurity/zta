@@ -28,7 +28,7 @@ one each agent gets — no false sense of security.
 | Tier | Mechanism | Assurance | Agents |
 |------|-----------|-----------|--------|
 | **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code (✅), Codex CLI (planned) |
-| **Sandbox** | `zta run` launches the agent inside an OS-level sandbox | High, agent-independent | any agent (planned) |
+| **Sandbox** | `zta run` launches the agent with a shim PATH that routes command execution through the engine | Catches commands the agent runs (any agent) | ✅ any agent |
 
 The guard logic is identical across tiers; only the *wiring* differs.
 
@@ -58,15 +58,16 @@ Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Early but functional. What exists today:
 
-- ✅ `zta guard` — the enforcement entrypoint (fail-closed)
+- ✅ `zta guard` — hook-tier enforcement entrypoint (fail-closed)
+- ✅ `zta run` — sandbox-tier launcher for agents without hooks
 - ✅ `zta version`
 - ✅ Claude Code adapter (PreToolUse hooks)
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
 
-Planned (see [Roadmap](#roadmap)): `zta run` (sandbox tier), Cursor & Codex
-adapters, `zta audit` (posture auditor), `zta init` (scaffold + auto-wire), and
-tool-call logging.
+Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, `zta audit` (posture
+auditor), `zta init` (scaffold + auto-wire), tool-call logging, and a container
+backend for kernel-level isolation.
 
 ---
 
@@ -110,6 +111,22 @@ shown to the agent:
 That single hook replaces the four bash guards from the legacy pack. Claude Code
 sets `CLAUDE_PROJECT_DIR`, which `zta` uses to scope policy-integrity protection
 to *your* repo.
+
+### Any agent (sandbox tier)
+
+For agents without usable hooks (Cursor, Copilot, …), launch them through
+`zta run`. It puts a shim `PATH` in front of the agent so the **commands it runs**
+are evaluated by the same engine before they execute — no agent cooperation
+required:
+
+```bash
+zta run -- cursor-agent          # or: aider, codex, any CLI agent
+zta run -- bash                  # even a plain shell is now guarded
+```
+
+A blocked command fails with exit `126` and a reason on stderr; everything else
+runs normally. This intercepts the shell (so full pipelines like `curl … | bash`
+are caught) plus a default set of high-risk binaries.
 
 ### Try it directly
 
@@ -175,20 +192,25 @@ access), `protect_write` (paths write-protected within the project),
 - **The model can route around naive blocks.** Block `Write` and it may use a
   Bash heredoc; block `rm` and it may use `perl -e unlink`. The command rules
   cover common shapes, not all of them.
-- **Hard isolation needs OS-level controls.** For real guarantees, run the agent
-  in a sandboxed/containerized worktree with restricted filesystem and network
-  egress. That is the planned sandbox tier.
+- **The sandbox tier intercepts *commands*, not raw syscalls.** `zta run`
+  evaluates what the agent executes through the shell and shimmed binaries. It
+  does **not** trap file reads/writes the agent's own process performs directly
+  (e.g. an agent that opens `.env` via a syscall rather than running `cat`). For
+  that, use the hook tier or the planned container backend.
+- **Hard isolation needs the kernel.** For guarantees against a determined
+  process, run the agent in a container/namespaced worktree with restricted
+  filesystem and network egress — the planned container backend for `zta run`.
 - **Hook tier depends on the agent honoring hooks.** On agents without real
-  hooks, only the sandbox tier enforces; config there is advisory.
+  hooks, use the sandbox tier instead.
 
-Treat the hook tier as the deterministic 80%, paired with OS-level isolation —
-not a replacement for it.
+Treat these as the deterministic 80%, paired with OS-level isolation — not a
+replacement for it.
 
 ---
 
 ## Roadmap
 
-1. **Sandbox tier** (`zta run -- <agent…>`) — universal, agent-independent enforcement.
+1. **Container backend for `zta run`** — kernel-level filesystem/network isolation (catches raw syscalls, not just commands).
 2. **Cursor / Codex / Copilot adapters.**
 3. **`zta audit`** — score a repo's agent configuration against the control catalog and fail CI on misconfiguration.
 4. **`zta init`** — scaffold a policy and auto-wire detected agents.

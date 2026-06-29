@@ -14,6 +14,7 @@ import (
 	_ "github.com/networkdefendersecurity/zta/internal/adapter/claudecode"
 	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
+	"github.com/networkdefendersecurity/zta/internal/sandbox"
 )
 
 var version = "0.1.0-dev"
@@ -26,6 +27,10 @@ func main() {
 	switch os.Args[1] {
 	case "guard":
 		cmdGuard(os.Args[2:])
+	case "run":
+		cmdRun(os.Args[2:])
+	case "__shim": // internal: invoked by sandbox shim wrappers, not by users
+		cmdShim(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Printf("zta %s\n", version)
 	case "help", "-h", "--help":
@@ -41,7 +46,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `zta %s — zero-trust enforcement for AI coding agents
 
 Usage:
-  zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin
+  zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin (hook tier)
+  zta run [--root DIR] [--policy FILE] -- <command...>    launch a command in the sandbox tier
   zta version                                             print version
   zta help                                                show this help
 
@@ -86,6 +92,38 @@ func cmdGuard(args []string) {
 
 	d := engine.Evaluate(pol, ev)
 	os.Exit(a.Respond(os.Stderr, d))
+}
+
+// cmdRun launches a command in the sandbox tier: a shim PATH that routes
+// execution of risky binaries back through the policy engine. Use for agents
+// that expose no native hook. Everything after `--` is the command to run.
+func cmdRun(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	root := fs.String("root", defaultRoot(), "project root used to scope policy-integrity protection")
+	policyFile := fs.String("policy", os.Getenv("ZTA_POLICY"), "optional JSON policy file overriding defaults")
+	fs.Parse(args)
+
+	cmd := fs.Args()
+	if len(cmd) == 0 {
+		fmt.Fprintln(os.Stderr, "zta run: nothing to run\nusage: zta run [--root DIR] [--policy FILE] -- <command...>")
+		os.Exit(2)
+	}
+
+	code, err := sandbox.Run(cmd, sandbox.Options{PolicyFile: *policyFile, Root: *root})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zta run: %v\n", err)
+		os.Exit(2)
+	}
+	os.Exit(code)
+}
+
+// cmdShim is the internal entrypoint each sandbox shim wrapper invokes. It
+// evaluates the intercepted command and, if allowed, execs the real binary.
+func cmdShim(args []string) {
+	fs := flag.NewFlagSet("__shim", flag.ExitOnError)
+	name := fs.String("name", "", "intercepted tool name")
+	fs.Parse(args)
+	os.Exit(sandbox.Shim(*name, fs.Args()))
 }
 
 // defaultRoot prefers an agent-provided project dir, falling back to cwd.

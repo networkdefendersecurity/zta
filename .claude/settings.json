@@ -16,9 +16,7 @@
       "Edit(.git/**)",
       "Write(.git/**)",
       "Bash(rm -rf:*)",
-      "Bash(git push --force:*)",
-      "Bash(:* | bash)",
-      "Bash(:* | sh)"
+      "Bash(git push --force:*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -29,26 +27,8 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "bash .claude/hooks/zt-guard.sh" }]
-      },
-      {
-        "matcher": "Read|Edit|Write|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "bash .claude/hooks/zt-file-guard.sh" }]
-      },
-      {
-        "matcher": "Write|Edit",
-        "hooks": [{ "type": "command", "command": "bash .claude/hooks/zt-secret-scan.sh" }]
-      },
-      {
-        "matcher": "*",
-        "hooks": [{ "type": "command", "command": "bash .claude/hooks/zt-log.sh" }]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [{ "type": "command", "command": "bash .claude/hooks/zt-log.sh" }]
+        "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }]
       }
     ]
   }

@@ -1,4 +1,5 @@
 # Zero-trust runtime audit log (machine-local, not policy config)
+.zta/logs/
 .claude/logs/
 
 # Go build artifacts

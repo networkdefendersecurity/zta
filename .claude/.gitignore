@@ -1,2 +1,5 @@
-# Runtime action log written by zt-log.sh; not policy, not committed.
+# Machine-local Claude Code overrides — never commit personal/local grants.
+settings.local.json
+
+# Runtime action log (machine-local; not policy, not committed).
 logs/

@@ -12,18 +12,6 @@ import (
 	"strings"
 )
 
-// DockerOptions configures the container backend of `zta run`.
-type DockerOptions struct {
-	Image       string   // container image (required)
-	Root        string   // host project root, mounted at /workspace (absolute)
-	Network     string   // container network mode; default "none"
-	PolicyFile  string   // host JSON policy override, mounted read-only (absolute) or ""
-	ExtraMounts []string // additional raw `-v` mount specs
-	MaskSecrets bool     // mask repo secret files with an empty file
-	TTY         bool     // allocate a pseudo-TTY (-t)
-	User        string   // run as this uid:gid (set by RunDocker to the host user)
-}
-
 // RunDocker launches argv inside a hardened container: only the project root is
 // mounted, the host environment and credentials are absent, the network is
 // restricted, and the zta binary is mounted so the shim tier still applies

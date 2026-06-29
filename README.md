@@ -78,17 +78,21 @@ Planned (see [Roadmap](#roadmap)): tagged cross-compiled releases.
 
 ## Install
 
-Until tagged binaries ship, build from source. Requires Go 1.26+.
+**Prebuilt binaries.** Each tagged release publishes static binaries for
+linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64, plus a
+`SHA256SUMS` file. Download the one for your platform, verify it, and put it on
+your `PATH`:
 
 ```bash
-git clone https://github.com/networkdefendersecurity/zta
-cd zta
-go build -o zta ./cmd/zta
-./zta version
+curl -sSLO https://github.com/networkdefendersecurity/zta/releases/latest/download/zta_<ver>_linux_amd64
+curl -sSLO https://github.com/networkdefendersecurity/zta/releases/latest/download/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS    # verify before trusting
+install -m755 zta_<ver>_linux_amd64 /usr/local/bin/zta
 ```
 
-The result is a static binary with no runtime dependencies — copy it anywhere on
-your `PATH`.
+**From source** (Go 1.26+): `go build -o zta ./cmd/zta`. The result is a static,
+dependency-free binary. The sandbox tier (`zta run`) is Unix-only; the hook tier
+works on every platform including Windows.
 
 ---
 
@@ -296,7 +300,10 @@ replacement for it.
 
 ## Roadmap
 
-1. **Tagged cross-compiled releases** — prebuilt binaries per OS/arch so adopters don't build from source.
+The core is in place: four hook adapters, two sandbox backends, posture audit,
+audit logging, one-command setup, and cross-compiled releases. Possible next
+directions: more agent adapters, a native Windows sandbox backend, signed/SBOM'd
+releases, and richer policy packs.
 
 ---
 
@@ -323,6 +330,11 @@ go test ./...     # unit tests + fixture-backed behavior tests
 go vet ./...
 gofmt -l .        # should print nothing
 ```
+
+Releases: push a `vX.Y.Z` tag and the `release` workflow cross-compiles, stamps
+the version, and publishes the binaries + `SHA256SUMS`. Build locally with
+`scripts/build-release.sh [VERSION]` (artifacts land in `dist/`). CI
+(`go test`/`vet`/cross-compile/`zta audit`) gates `main` and every PR.
 
 v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control
 mappings are advisory alignments, not legal determinations.

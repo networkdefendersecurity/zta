@@ -30,13 +30,6 @@ var defaultTargets = []string{
 	"rm", "git", "curl", "wget", "chmod", "dd",
 }
 
-// Options configures a sandboxed run.
-type Options struct {
-	PolicyFile   string   // optional JSON policy override
-	Root         string   // project root for policy-integrity scoping
-	ExtraTargets []string // additional binaries to shim
-}
-
 // Run launches argv with a shim PATH that routes execution of the target
 // binaries back through `zta __shim`. It returns the child's exit code. The
 // shim directory is removed when the child exits.

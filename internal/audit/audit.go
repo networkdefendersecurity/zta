@@ -87,8 +87,13 @@ func Evaluate(root string) map[string]Result {
 		res["IA-02"] = Result{Fail, "no secret-scan or file-guard enforcement"}
 	}
 
-	// AC-01 — deny-by-default
+	// AC-01 — deny-by-default. A zta guard is itself the deny-by-default
+	// enforcement (it blocks dangerous actions regardless of the permission
+	// list), so it satisfies AC-01 on its own; the legacy bash guard is paired
+	// with a settings deny list.
 	switch {
+	case ztaWired:
+		res["AC-01"] = Result{Pass, "zta guard enforces deny-by-default at the tool-call boundary"}
 	case len(deny) > 0 && guard:
 		res["AC-01"] = Result{Pass, fmt.Sprintf("%d deny rules + command guard", len(deny))}
 	case len(deny) > 0 || guard:

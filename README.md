@@ -58,6 +58,7 @@ Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Early but functional. What exists today:
 
+- ✅ `zta init` — wire enforcement into a repo (idempotent, with dry-run)
 - ✅ `zta guard` — hook-tier enforcement entrypoint (fail-closed)
 - ✅ `zta run` — sandbox-tier launcher for agents without hooks
 - ✅ `zta audit` — posture auditor; scores config vs the control catalog, gates CI
@@ -66,8 +67,8 @@ Early but functional. What exists today:
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
 
-Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, `zta init` (scaffold +
-auto-wire), tool-call logging, and a container backend for kernel-level isolation.
+Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, tool-call logging, and
+a container backend for kernel-level isolation.
 
 ---
 
@@ -88,6 +89,20 @@ your `PATH`.
 ---
 
 ## Usage
+
+### Quick start
+
+From your repo, wire enforcement in one command (preview first with `--dry-run`):
+
+```bash
+zta init --dry-run        # show what would change
+zta init                  # wire `zta guard` into the agent + scaffold CLAUDE.md
+zta init --policy         # also drop a zta.json mirroring the built-in defaults
+zta audit .               # see remaining Foundation gaps
+```
+
+`zta init` merges into existing config (it won't clobber your settings) and is
+idempotent. For an agent without hooks, it prints sandbox-tier guidance instead.
 
 ### Claude Code (hook tier)
 
@@ -226,9 +241,8 @@ replacement for it.
 
 1. **Container backend for `zta run`** — kernel-level filesystem/network isolation (catches raw syscalls, not just commands).
 2. **Cursor / Codex / Copilot adapters.**
-3. **`zta init`** — scaffold a policy and auto-wire detected agents.
-4. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos.
-5. **Tagged cross-compiled releases.**
+3. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
+4. **Tagged cross-compiled releases.**
 
 ---
 

@@ -159,6 +159,26 @@ filesystem/network restrictions.
    - other error → exit 2 (**fail closed** — unparseable gated payload).
 3. `engine.Evaluate` → `adapter.Respond` → exit with its code.
 
+## Setup (`zta init`)
+
+`internal/setup` wires enforcement into a repo for a given agent. `BuildPlan`
+computes the changes (so `--dry-run` can preview them) and `Apply` writes them:
+
+- **Claude Code** → merges a `zta guard` `PreToolUse` hook into
+  `.claude/settings.json`. The file is parsed as a generic `map[string]any` and
+  re-serialized, so existing keys (permissions, other hooks) are preserved rather
+  than dropped. Idempotent: a run that finds an existing `zta guard` command
+  skips it.
+- **CLAUDE.md** is scaffolded from a template when absent (satisfies GV-01).
+- **`--policy`** writes `zta.json` by marshaling `policy.Default()`, so users see
+  and can edit exactly what is enforced.
+- **Non-hookable agents** (Cursor, Codex, …) get sandbox-tier guidance
+  (`zta run -- <agent>`) instead of a hook that wouldn't fire.
+
+`init` deliberately does not fake full compliance — it wires enforcement and
+points the user to `zta audit` for the remaining gaps (logging, subagent scoping,
+WebFetch gating) that need human decisions.
+
 ## Control catalog
 
 Rules carry a control id from the *Zero Trust for AI Agents* Foundation tier:

@@ -16,6 +16,7 @@ import (
 	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 	"github.com/networkdefendersecurity/zta/internal/sandbox"
+	"github.com/networkdefendersecurity/zta/internal/setup"
 )
 
 var version = "0.1.0-dev"
@@ -26,6 +27,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "init":
+		cmdInit(os.Args[2:])
 	case "guard":
 		cmdGuard(os.Args[2:])
 	case "run":
@@ -49,6 +52,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `zta %s — zero-trust enforcement for AI coding agents
 
 Usage:
+  zta init [--agent NAME] [--dir DIR] [--policy] [--dry-run]   wire enforcement into a repo
   zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin (hook tier)
   zta run [--root DIR] [--policy FILE] -- <command...>    launch a command in the sandbox tier
   zta audit [DIR] [--strict]                              score agent config against the control catalog
@@ -57,6 +61,45 @@ Usage:
 
 Adapters: %s
 `, version, strings.Join(adapter.Names(), ", "))
+}
+
+// cmdInit wires zta enforcement into a repo for a coding agent and scaffolds the
+// supporting policy docs. It is idempotent; --dry-run previews changes.
+func cmdInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	agent := fs.String("agent", "claude-code", "coding agent to wire")
+	dir := fs.String("dir", ".", "target repository directory")
+	pol := fs.Bool("policy", false, "also scaffold a zta.json starter policy")
+	dry := fs.Bool("dry-run", false, "show planned changes without writing")
+	force := fs.Bool("force", false, "overwrite existing zta wiring / scaffolds")
+	fs.Parse(args)
+
+	plan, err := setup.BuildPlan(setup.Options{Dir: *dir, Agent: *agent, Policy: *pol, Force: *force})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zta init: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(plan.Changes) == 0 && len(plan.Notes) == 0 {
+		fmt.Println("zta init: nothing to do")
+		return
+	}
+	for _, c := range plan.Changes {
+		fmt.Printf("  %-7s %s  (%s)\n", c.Action, c.Path, c.Detail)
+	}
+	for _, n := range plan.Notes {
+		fmt.Printf("\n  note: %s\n", n)
+	}
+
+	if *dry {
+		fmt.Println("\n(dry run — nothing written)")
+		return
+	}
+	if err := plan.Apply(); err != nil {
+		fmt.Fprintf(os.Stderr, "zta init: write failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\nDone. Ensure the `zta` binary is on PATH, then run `zta audit %s` to see remaining gaps.\n", *dir)
 }
 
 // cmdGuard is the enforcement entrypoint invoked by an agent's native hook. It

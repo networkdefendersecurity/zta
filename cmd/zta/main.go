@@ -12,6 +12,7 @@ import (
 
 	"github.com/networkdefendersecurity/zta/internal/adapter"
 	_ "github.com/networkdefendersecurity/zta/internal/adapter/claudecode"
+	"github.com/networkdefendersecurity/zta/internal/audit"
 	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 	"github.com/networkdefendersecurity/zta/internal/sandbox"
@@ -29,6 +30,8 @@ func main() {
 		cmdGuard(os.Args[2:])
 	case "run":
 		cmdRun(os.Args[2:])
+	case "audit":
+		cmdAudit(os.Args[2:])
 	case "__shim": // internal: invoked by sandbox shim wrappers, not by users
 		cmdShim(os.Args[2:])
 	case "version", "--version", "-v":
@@ -48,6 +51,7 @@ func usage() {
 Usage:
   zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin (hook tier)
   zta run [--root DIR] [--policy FILE] -- <command...>    launch a command in the sandbox tier
+  zta audit [DIR] [--strict]                              score agent config against the control catalog
   zta version                                             print version
   zta help                                                show this help
 
@@ -117,6 +121,21 @@ func cmdRun(args []string) {
 	os.Exit(code)
 }
 
+// cmdAudit scores a repository's agent configuration against the Foundation
+// control catalog and exits non-zero if a repo-scope control fails, so CI can
+// gate AI-generated changes.
+func cmdAudit(args []string) {
+	fs := flag.NewFlagSet("audit", flag.ExitOnError)
+	strict := fs.Bool("strict", false, "also fail the build on PARTIAL results")
+	fs.Parse(args)
+
+	root := "."
+	if rest := fs.Args(); len(rest) > 0 {
+		root = rest[0]
+	}
+	os.Exit(audit.Run(os.Stdout, root, *strict, isTTY(os.Stdout)))
+}
+
 // cmdShim is the internal entrypoint each sandbox shim wrapper invokes. It
 // evaluates the intercepted command and, if allowed, execs the real binary.
 func cmdShim(args []string) {
@@ -124,6 +143,12 @@ func cmdShim(args []string) {
 	name := fs.String("name", "", "intercepted tool name")
 	fs.Parse(args)
 	os.Exit(sandbox.Shim(*name, fs.Args()))
+}
+
+// isTTY reports whether f is a terminal, used to decide on ANSI color.
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // defaultRoot prefers an agent-provided project dir, falling back to cwd.

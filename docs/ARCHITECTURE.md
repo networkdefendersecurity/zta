@@ -170,6 +170,19 @@ Rules carry a control id from the *Zero Trust for AI Agents* Foundation tier:
 | IR-01 | policy integrity |
 | IO-02 | secret hygiene (no secrets in code) |
 
-Controls assessed by the (planned) `zta audit` rather than enforced at runtime —
-and those out of scope for a repo-local tool (behavioral monitoring, agent
-identity, org incident response) — will be documented with the auditor.
+## Auditor (`zta audit`)
+
+`internal/audit` is the *verify* half: it scores a repository's agent
+configuration against the full Foundation catalog (`controls.go`) and renders a
+scorecard, exiting non-zero on any repo-scope `FAIL` so CI can gate AI-generated
+changes. It is a dependency-free Go port of the original `zt-audit/` Python tool,
+verified to produce the same scorecard.
+
+`Evaluate(root)` inspects `.claude/settings.json`, the subagent definitions, and
+`CLAUDE.md`. Each repo-scope check recognizes enforcement wired either as
+`zta guard` / `zta run` **or** as the legacy bash hooks, so it works during and
+after migration. Controls requiring out-of-band verification are reported
+`MANUAL` (e.g. AC-03 isolation); those out of repo scope (behavioral monitoring,
+agent identity, org incident response) are `N/A`. Logging controls (OA-01/02)
+currently rely on the legacy logging hook — they will be satisfied by zta's own
+logging once that lands.

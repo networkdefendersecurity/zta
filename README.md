@@ -60,14 +60,14 @@ Early but functional. What exists today:
 
 - ✅ `zta guard` — hook-tier enforcement entrypoint (fail-closed)
 - ✅ `zta run` — sandbox-tier launcher for agents without hooks
+- ✅ `zta audit` — posture auditor; scores config vs the control catalog, gates CI
 - ✅ `zta version`
 - ✅ Claude Code adapter (PreToolUse hooks)
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
 
-Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, `zta audit` (posture
-auditor), `zta init` (scaffold + auto-wire), tool-call logging, and a container
-backend for kernel-level isolation.
+Planned (see [Roadmap](#roadmap)): Cursor & Codex adapters, `zta init` (scaffold +
+auto-wire), tool-call logging, and a container backend for kernel-level isolation.
 
 ---
 
@@ -127,6 +127,20 @@ zta run -- bash                  # even a plain shell is now guarded
 A blocked command fails with exit `126` and a reason on stderr; everything else
 runs normally. This intercepts the shell (so full pipelines like `curl … | bash`
 are caught) plus a default set of high-risk binaries.
+
+### Audit posture (CI gate)
+
+`zta audit` scores a repo's agent configuration against the Foundation control
+catalog and exits non-zero if a repo-scope control fails — drop it in CI to gate
+AI-generated changes:
+
+```bash
+zta audit .            # scorecard + verdict; exit 1 on any FAIL
+zta audit . --strict   # also fail on PARTIAL
+```
+
+It recognizes both `zta` wiring (`zta guard` / `zta run`) and the legacy bash
+hooks, so it works during and after migration.
 
 ### Try it directly
 
@@ -212,20 +226,20 @@ replacement for it.
 
 1. **Container backend for `zta run`** — kernel-level filesystem/network isolation (catches raw syscalls, not just commands).
 2. **Cursor / Codex / Copilot adapters.**
-3. **`zta audit`** — score a repo's agent configuration against the control catalog and fail CI on misconfiguration.
-4. **`zta init`** — scaffold a policy and auto-wire detected agents.
-5. **Tool-call logging** — append-only attribution log (OA-01/02).
-6. **Tagged cross-compiled releases.**
+3. **`zta init`** — scaffold a policy and auto-wire detected agents.
+4. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos.
+5. **Tagged cross-compiled releases.**
 
 ---
 
 ## Legacy Claude Code pack
 
 The original `.claude/` bash hooks, `CLAUDE.md`, and `zt-audit/` Python auditor
-still live in this repo and remain functional for Claude Code. They are being
-superseded by `zta` and will be retired once the Go tool reaches parity (audit +
-init). `zta` itself cannot modify `.claude/` — its own integrity guard blocks
-that, by design.
+still live in this repo and remain functional for Claude Code. `zta audit` is a
+faithful, dependency-free port of `zt-audit/` (verified to produce the same
+scorecard), so the Python auditor can be retired. The bash hooks are superseded
+by `zta guard` and will be retired once `zta init` lands. `zta` itself cannot
+modify `.claude/` — its own integrity guard blocks that, by design.
 
 ---
 

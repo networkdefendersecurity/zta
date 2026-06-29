@@ -286,6 +286,13 @@ and nothing here is complete:
   file reads/writes the agent's own process performs directly (e.g. opening `.env`
   via a syscall rather than running `cat`). For that, use the hook tier or the
   `docker` backend, which removes host credentials from the filesystem entirely.
+- **The shim backend is a guardrail, not a containment boundary.** Because it works
+  by putting a shim `PATH` in front of the agent, an *adversarial or prompt-injected*
+  agent can step around it in one line — invoking a tool by absolute path
+  (`/bin/rm …`) or restoring the original `PATH` — since the shim and the agent run
+  as the same user. It reliably catches *accidental* and *naive* dangerous commands;
+  it does **not** contain an agent that is actively trying to escape. For that
+  threat model, use the **`docker` backend**, whose isolation is kernel-enforced.
 - **The container backend depends on Docker** and on you supplying an image with
   your agent's toolchain. It hardens the host boundary (FS/creds/network); within
   the mounted `/workspace`, destructive deletes of specific subpaths are still

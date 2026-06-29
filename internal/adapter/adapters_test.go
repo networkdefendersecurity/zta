@@ -87,6 +87,14 @@ func TestCopilot(t *testing.T) {
 	if code, _, _ := runHook(t, "copilot", `{"toolName":"shell","toolArgs":{"mystery":"rm -rf /"}}`); code != 2 {
 		t.Errorf("copilot unknown-key fallback: code=%d want 2 (dangerous command must not slip through)", code)
 	}
+	// command nested in an object: the fallback must recurse (F1).
+	if code, _, _ := runHook(t, "copilot", `{"toolName":"bash","toolArgs":{"input":{"command":"rm -rf /"}}}`); code != 2 {
+		t.Errorf("copilot nested-object fallback: code=%d want 2 (nested dangerous command must not slip through)", code)
+	}
+	// command passed as an argv array: the fallback must recurse into arrays (F1).
+	if code, _, _ := runHook(t, "copilot", `{"toolName":"bash","toolArgs":{"argv":["rm","-rf","/"]}}`); code != 2 {
+		t.Errorf("copilot array fallback: code=%d want 2 (array-form dangerous command must not slip through)", code)
+	}
 	if code, out, _ := runHook(t, "copilot", `{"toolName":"bash","toolArgs":{"command":"go build"}}`); code != 0 || !strings.Contains(out, `"permissionDecision":"allow"`) {
 		t.Errorf("copilot safe: code=%d stdout=%q", code, out)
 	}

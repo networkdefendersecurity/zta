@@ -96,19 +96,37 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// allStrings concatenates every string value in m (sorted by key for
-// determinism) so command/content text is matched even under an unexpected key.
+// allStrings concatenates every string value reachable in m — including values
+// nested inside objects and arrays — sorted by key for determinism, so the
+// command/content text is matched even when it sits under an unexpected key or
+// nesting. A fallback that only scanned top-level strings would let a command
+// passed as {"input":{"command":...}} or {"argv":[...]} through unscanned.
 func allStrings(m map[string]any) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var parts []string
-	for _, k := range keys {
-		if s, ok := m[k].(string); ok && s != "" {
-			parts = append(parts, s)
+	collectStrings(m, &parts)
+	return strings.Join(parts, " ")
+}
+
+// collectStrings appends every string reachable from v to out, recursing into
+// maps (in sorted key order, for deterministic output) and arrays.
+func collectStrings(v any, out *[]string) {
+	switch t := v.(type) {
+	case string:
+		if t != "" {
+			*out = append(*out, t)
+		}
+	case []any:
+		for _, e := range t {
+			collectStrings(e, out)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			collectStrings(t[k], out)
 		}
 	}
-	return strings.Join(parts, " ")
 }

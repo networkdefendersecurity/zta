@@ -11,13 +11,30 @@ func Default() *Policy {
 				Name:    "destructive-delete",
 				Control: "AC-01",
 				Reason:  "destructive recursive delete (rm -rf of a broad path)",
-				Pattern: `(?i)(^|[;&|[:space:]])rm[[:space:]]+(-[a-z]*[rf][a-z]*[[:space:]]+)+(-[a-z]+[[:space:]]+)*(/|~|\$HOME|\*|/\*|\.\.?)([[:space:]]|/|$)`,
+				// Matches `rm` as a command word — tolerating a path prefix
+				// (/bin/rm) or a shell escape (\rm) so those do not slip the
+				// anchor — followed by at least one recursive/force flag in
+				// either short (-rf, -r) or long (--recursive, --force) form,
+				// then a broad/system target path.
+				Pattern: `(?i)(^|[;&|[:space:]])(\\|[^[:space:];&|]*/)?rm[[:space:]]+(--?[a-z][a-z-]*[[:space:]]+)*(-[a-z]*[rf][a-z]*|--recursive|--force)[[:space:]]+(--?[a-z][a-z-]*[[:space:]]+)*(/|~|\$HOME|\*|/\*|\.\.?)([[:space:]]|/|$)`,
 			},
 			{
 				Name:    "pipe-to-shell",
 				Control: "AC-01",
 				Reason:  "pipe-to-shell (curl|wget … | sh) executes untrusted remote code",
-				Pattern: `\|[[:space:]]*(ba|z)?sh([[:space:]]|$)`,
+				// Any pipe into a shell interpreter, optionally by path
+				// (| /bin/bash). Covers sh, bash, zsh, dash, ash, ksh, fish.
+				Pattern: `\|[[:space:]]*(/[^[:space:]|;&]*/)?((ba|z|da|a|k)?sh|fish)([[:space:]]|$)`,
+			},
+			{
+				Name:    "fetch-to-interpreter",
+				Control: "AC-01",
+				Reason:  "executing fetched remote code (curl|wget|fetch piped or substituted into an interpreter/eval)",
+				// Targets remote-code execution specifically — a fetch tool must
+				// be present — so ordinary local pipes (cat x | python) and output
+				// capture (x=$(curl …)) are not flagged. Covers `curl … | python`,
+				// `eval "$(curl …)"`, and `bash <(curl …)` and friends.
+				Pattern: `(?i)(\b(curl|wget|fetch)\b[^|;&]*\|[[:space:]]*(/[^[:space:]|;&]*/)?(python[0-9.]*|perl|ruby|node|php|tclsh)([[:space:]]|$)|eval[[:space:]]+['"]?\$\([[:space:]]*\b(curl|wget|fetch)\b|((ba|z|da|a|k)?sh|fish|source|\.)[[:space:]]+<\([[:space:]]*\b(curl|wget|fetch)\b)`,
 			},
 			{
 				Name:    "force-push",

@@ -5,3 +5,7 @@
 /zta
 *.test
 *.out
+
+# Python bytecode
+__pycache__/
+*.pyc

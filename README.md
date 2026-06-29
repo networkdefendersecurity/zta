@@ -307,19 +307,33 @@ releases, and richer policy packs.
 
 ---
 
-## Legacy Claude Code pack
+## Legacy pack retirement
 
-The original `.claude/` bash hooks, `CLAUDE.md`, and `zt-audit/` Python auditor
-still live in this repo and remain functional for Claude Code. They are now fully
-superseded:
+This repo began as a Claude-Code-only `.claude/` bash pack; `zta` supersedes it.
 
-- `zta audit` is a faithful, dependency-free port of `zt-audit/` (verified to
-  produce the same scorecard), so the Python auditor can be retired.
-- `zta init` generates the equivalent `zta guard` wiring, so the bash hooks can
-  be retired in favor of the binary.
+**Retired** (verify layer — replaced by `zta audit` + Go tests + the `ci` workflow):
 
-Retirement is left as a reviewed human change — `zta` itself cannot modify
-`.claude/`, since its own integrity guard blocks that by design.
+- `zt-audit/` Python auditor — `zta audit` is a faithful, dependency-free port.
+- `tests/test_hooks.sh` + fixtures — covered by the Go test suite.
+- `.github/workflows/zt-audit.yml` — replaced by `.github/workflows/ci.yml`.
+
+**Pending a human PR** (enforce layer): the `.claude/` bash hooks
+(`zt-guard.sh`, `zt-file-guard.sh`, `zt-secret-scan.sh`, `zt-log.sh`) and their
+registration in `.claude/settings.json`. Replace all four with a single
+`zta guard` hook:
+
+```json
+"PreToolUse": [
+  { "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+    "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }] }
+]
+```
+
+then `git rm .claude/hooks/*.sh`. `zta guard` does everything the four scripts did
+(command/file/secret guarding **and** logging). This must be a reviewed human
+change because `zta`'s own integrity guard blocks the agent from modifying
+`.claude/` — the control working as intended. Ensure `zta` is on `PATH` first.
+Keep `.claude/agents/*.md` (least-privilege subagents) and `CLAUDE.md`.
 
 ---
 

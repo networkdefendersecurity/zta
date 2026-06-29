@@ -72,11 +72,16 @@ func commandString(name string, args []string) string {
 	return filepath.Base(name) + " " + strings.Join(args, " ")
 }
 
-// EvalInvocation evaluates an intercepted command against the policy.
-func EvalInvocation(p *policy.Policy, name string, args []string) policy.Decision {
-	return engine.Evaluate(p, &policy.Event{
+// invocationEvent builds the normalized exec event for an intercepted command.
+func invocationEvent(name string, args []string) *policy.Event {
+	return &policy.Event{
 		Action:  policy.ActionExec,
 		Command: commandString(name, args),
 		Agent:   "sandbox",
-	})
+	}
+}
+
+// EvalInvocation evaluates an intercepted command against the policy.
+func EvalInvocation(p *policy.Policy, name string, args []string) policy.Decision {
+	return engine.Evaluate(p, invocationEvent(name, args))
 }

@@ -23,6 +23,7 @@ func (Adapter) Name() string { return "claude-code" }
 type payload struct {
 	ToolName  string         `json:"tool_name"`
 	ToolInput map[string]any `json:"tool_input"`
+	SessionID string         `json:"session_id"`
 }
 
 func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
@@ -30,7 +31,11 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 	if err := json.NewDecoder(r).Decode(&in); err != nil {
 		return nil, fmt.Errorf("decode hook payload: %w", err)
 	}
-	return adapter.ClaudeStyleEvent("claude-code", in.ToolName, in.ToolInput)
+	ev, err := adapter.ClaudeStyleEvent("claude-code", in.ToolName, in.ToolInput)
+	if ev != nil {
+		ev.Session = in.SessionID
+	}
+	return ev, err
 }
 
 func (Adapter) Respond(stdout, stderr io.Writer, d policy.Decision) int {

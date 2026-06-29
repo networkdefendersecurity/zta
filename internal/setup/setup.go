@@ -93,6 +93,9 @@ func BuildPlan(opts Options) (*Plan, error) {
 	if err := p.scaffoldClaudeMD(opts); err != nil {
 		return nil, err
 	}
+	if err := p.scaffoldGitignore(opts); err != nil {
+		return nil, err
+	}
 	if opts.Policy {
 		if err := p.scaffoldPolicy(opts); err != nil {
 			return nil, err
@@ -222,6 +225,30 @@ func (p *Plan) scaffoldClaudeMD(opts Options) error {
 	}
 	p.writes[path] = []byte(claudeMDTemplate)
 	p.Changes = append(p.Changes, Change{path, "create", "acceptable-use policy (GV-01)"})
+	return nil
+}
+
+// scaffoldGitignore ensures the machine-local audit log is git-ignored.
+func (p *Plan) scaffoldGitignore(opts Options) error {
+	path := filepath.Join(opts.Dir, ".gitignore")
+	const entry = ".zta/logs/"
+	block := "# zta runtime audit log (machine-local)\n" + entry + "\n"
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		p.writes[path] = []byte(block)
+		p.Changes = append(p.Changes, Change{path, "create", "ignore zta audit log"})
+		return nil
+	}
+	if strings.Contains(string(b), entry) {
+		return nil // already ignored; leave the file untouched
+	}
+	content := string(b)
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	p.writes[path] = []byte(content + "\n" + block)
+	p.Changes = append(p.Changes, Change{path, "update", "ignore zta audit log"})
 	return nil
 }
 

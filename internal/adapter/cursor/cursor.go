@@ -30,6 +30,7 @@ type payload struct {
 	ToolName  string         `json:"tool_name"` // preToolUse
 	ToolInput map[string]any `json:"tool_input"`
 	FilePath  string         `json:"file_path"` // beforeReadFile
+	SessionID string         `json:"session_id"`
 }
 
 func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
@@ -37,16 +38,22 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 	if err := json.NewDecoder(r).Decode(&in); err != nil {
 		return nil, fmt.Errorf("decode cursor hook payload: %w", err)
 	}
+	var ev *policy.Event
+	var err error
 	switch {
 	case in.Command != "":
-		return &policy.Event{Agent: "cursor", Action: policy.ActionExec, Command: in.Command}, nil
+		ev = &policy.Event{Agent: "cursor", Action: policy.ActionExec, Command: in.Command}
 	case in.ToolName != "":
-		return adapter.ClaudeStyleEvent("cursor", in.ToolName, in.ToolInput)
+		ev, err = adapter.ClaudeStyleEvent("cursor", in.ToolName, in.ToolInput)
 	case in.FilePath != "":
-		return &policy.Event{Agent: "cursor", Action: policy.ActionFileRead, Path: in.FilePath}, nil
+		ev = &policy.Event{Agent: "cursor", Action: policy.ActionFileRead, Path: in.FilePath}
 	default:
 		return nil, adapter.ErrPassthrough
 	}
+	if ev != nil {
+		ev.Session = in.SessionID
+	}
+	return ev, err
 }
 
 func (Adapter) Respond(stdout, stderr io.Writer, d policy.Decision) int {

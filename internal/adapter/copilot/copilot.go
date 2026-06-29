@@ -29,8 +29,9 @@ type Adapter struct{}
 func (Adapter) Name() string { return "copilot" }
 
 type payload struct {
-	ToolName string         `json:"toolName"`
-	ToolArgs map[string]any `json:"toolArgs"`
+	ToolName  string         `json:"toolName"`
+	ToolArgs  map[string]any `json:"toolArgs"`
+	SessionID string         `json:"sessionId"`
 }
 
 func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
@@ -39,30 +40,33 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 		return nil, fmt.Errorf("decode copilot hook payload: %w", err)
 	}
 	name := strings.ToLower(in.ToolName)
+	var ev *policy.Event
 	switch {
 	case strings.Contains(name, "bash"), strings.Contains(name, "shell"), strings.Contains(name, "exec"), strings.Contains(name, "run"):
 		cmd := firstString(in.ToolArgs, "command", "cmd", "script")
 		if cmd == "" {
 			cmd = allStrings(in.ToolArgs) // fall back: never miss the command text
 		}
-		return &policy.Event{Agent: "copilot", Action: policy.ActionExec, Command: cmd, Raw: in.ToolArgs}, nil
+		ev = &policy.Event{Agent: "copilot", Action: policy.ActionExec, Command: cmd, Raw: in.ToolArgs}
 	case strings.Contains(name, "edit"), strings.Contains(name, "write"), strings.Contains(name, "create"), strings.Contains(name, "patch"):
-		return &policy.Event{
+		ev = &policy.Event{
 			Agent:   "copilot",
 			Action:  policy.ActionFileWrite,
 			Path:    firstString(in.ToolArgs, "path", "file_path", "filePath", "filename"),
 			Content: firstNonEmpty(firstString(in.ToolArgs, "content", "newContent", "new_str", "text"), allStrings(in.ToolArgs)),
 			Raw:     in.ToolArgs,
-		}, nil
+		}
 	case strings.Contains(name, "view"), strings.Contains(name, "read"), strings.Contains(name, "cat"):
-		return &policy.Event{
+		ev = &policy.Event{
 			Agent:  "copilot",
 			Action: policy.ActionFileRead,
 			Path:   firstString(in.ToolArgs, "path", "file_path", "filePath", "filename"),
-		}, nil
+		}
 	default:
 		return nil, adapter.ErrPassthrough
 	}
+	ev.Session = in.SessionID
+	return ev, nil
 }
 
 func (Adapter) Respond(stdout, stderr io.Writer, d policy.Decision) int {

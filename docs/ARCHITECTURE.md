@@ -220,6 +220,25 @@ computes the changes (so `--dry-run` can preview them) and `Apply` writes them:
 points the user to `zta audit` for the remaining gaps (logging, subagent scoping,
 WebFetch gating) that need human decisions.
 
+## Audit log
+
+`internal/auditlog` appends one JSON line per gated decision (controls OA-01/
+OA-02). Both the hook path (`zta guard`) and the sandbox path (`zta __shim`) call
+`auditlog.Log(root, event, decision)` after evaluating.
+
+- **Best-effort:** a logging failure never blocks or changes enforcement.
+- **Content is never logged.** Records carry the command (truncated) or the
+  file path, the decision, the control/rule, agent, session id, and pid — but not
+  `Event.Content`, which may be the very secret a write rule is blocking.
+- **Destination:** `<root>/.zta/logs/audit.jsonl` by default — under the
+  integrity-protected `.zta/` directory so the agent can't tamper with it.
+  `ZTA_LOG` overrides the path or disables logging (`off`).
+- **Attribution:** adapters capture the agent's session id from the hook payload
+  into `Event.Session`; the sandbox tags records with a per-run `ZTA_SESSION`.
+
+Because a zta-wired repo logs by default, the auditor treats OA-01/OA-02 as
+satisfied when zta is wired.
+
 ## Control catalog
 
 Rules carry a control id from the *Zero Trust for AI Agents* Foundation tier:

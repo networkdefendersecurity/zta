@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
+	"github.com/networkdefendersecurity/zta/internal/auditlog"
+	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 )
 
@@ -63,6 +66,7 @@ func Run(argv []string, opts Options) (int, error) {
 		"PATH="+shimDir+string(os.PathListSeparator)+origPath,
 		"ZTA_REAL_PATH="+origPath, // PATH without the shim dir, so shims find real binaries
 		"ZTA_BIN="+bin,
+		"ZTA_SESSION=sandbox-"+strconv.Itoa(os.Getpid()),
 	)
 	if opts.PolicyFile != "" {
 		env = append(env, "ZTA_POLICY="+opts.PolicyFile)
@@ -104,7 +108,11 @@ func Shim(name string, args []string) int {
 	}
 	pol.ProjectRoot = os.Getenv("ZTA_PROJECT_DIR")
 
-	if d := EvalInvocation(pol, name, args); !d.Allow {
+	ev := invocationEvent(name, args)
+	ev.Session = os.Getenv("ZTA_SESSION")
+	d := engine.Evaluate(pol, ev)
+	auditlog.Log(pol.ProjectRoot, ev, d)
+	if !d.Allow {
 		fmt.Fprintf(os.Stderr, "zta: blocked in sandbox [%s/%s]: %s\n", d.Control, d.Rule, d.Reason)
 		return blockCode
 	}

@@ -27,6 +27,7 @@ func (Adapter) Name() string { return "codex" }
 type payload struct {
 	ToolName  string         `json:"tool_name"`
 	ToolInput map[string]any `json:"tool_input"`
+	SessionID string         `json:"session_id"`
 }
 
 func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
@@ -39,11 +40,15 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 		// patch text as write content (so secret-in-code rules still apply)
 		// rather than guessing a file_path key.
 		if patch := firstString(in.ToolInput, "input", "patch", "content"); patch != "" {
-			return &policy.Event{Agent: "codex", Action: policy.ActionFileWrite, Content: patch, Raw: in.ToolInput}, nil
+			return &policy.Event{Agent: "codex", Action: policy.ActionFileWrite, Content: patch, Session: in.SessionID, Raw: in.ToolInput}, nil
 		}
 		return nil, adapter.ErrPassthrough
 	}
-	return adapter.ClaudeStyleEvent("codex", in.ToolName, in.ToolInput)
+	ev, err := adapter.ClaudeStyleEvent("codex", in.ToolName, in.ToolInput)
+	if ev != nil {
+		ev.Session = in.SessionID
+	}
+	return ev, err
 }
 
 func (Adapter) Respond(stdout, stderr io.Writer, d policy.Decision) int {

@@ -28,6 +28,7 @@ type Event struct {
 	Path    string         // target file, for file actions
 	Content string         // content being written, for ActionFileWrite
 	Agent   string         // originating agent, e.g. "claude-code"
+	Session string         // agent session id, for log attribution (optional)
 	Raw     map[string]any // original tool input, for logging/debugging
 }
 

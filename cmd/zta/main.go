@@ -17,6 +17,7 @@ import (
 	_ "github.com/networkdefendersecurity/zta/internal/adapter/copilot"
 	_ "github.com/networkdefendersecurity/zta/internal/adapter/cursor"
 	"github.com/networkdefendersecurity/zta/internal/audit"
+	"github.com/networkdefendersecurity/zta/internal/auditlog"
 	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 	"github.com/networkdefendersecurity/zta/internal/sandbox"
@@ -142,6 +143,7 @@ func cmdGuard(args []string) {
 	}
 
 	d := engine.Evaluate(pol, ev)
+	auditlog.Log(pol.ProjectRoot, ev, d)
 	os.Exit(a.Respond(os.Stdout, os.Stderr, d))
 }
 

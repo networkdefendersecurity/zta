@@ -70,8 +70,9 @@ Early but functional. What exists today:
   hook protocol and deny format)
 - ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
   force-push, credential read/write, secret-in-code, policy-integrity)
+- ✅ Append-only audit log of every gated decision (OA-01/OA-02)
 
-Planned (see [Roadmap](#roadmap)): tool-call logging, and tagged releases.
+Planned (see [Roadmap](#roadmap)): tagged cross-compiled releases.
 
 ---
 
@@ -178,6 +179,23 @@ closes the shim tier's gap: file reads the agent performs via its own syscalls,
 not just commands. Use `--tty` for interactive agents and `--mount` for extra
 volumes.
 
+### Audit log
+
+Every gated decision (hook and sandbox tiers) is appended as one JSON line to
+`.zta/logs/audit.jsonl` under the project root — controls OA-01/OA-02:
+
+```json
+{"time":"2026-06-29T17:05:22Z","agent":"claude-code","session":"sess-123",
+ "action":"exec","command":"curl … | bash","decision":"block",
+ "control":"AC-01","rule":"pipe-to-shell","pid":123891}
+```
+
+It records the path of a write but **never its content**, so a blocked
+secret-write can't leak the secret into the log. The default lives under the
+integrity-protected `.zta/` directory (the agent can't tamper with it). Redirect
+with `ZTA_LOG=/path/to/log.jsonl`, or disable with `ZTA_LOG=off`. `zta init` adds
+`.zta/logs/` to `.gitignore`.
+
 ### Audit posture (CI gate)
 
 `zta audit` scores a repo's agent configuration against the Foundation control
@@ -278,8 +296,7 @@ replacement for it.
 
 ## Roadmap
 
-1. **Tool-call logging** — append-only attribution log (OA-01/02), which will also lift the auditor's OA-01/02 for zta-only repos and let `zta init` wire it.
-2. **Tagged cross-compiled releases.**
+1. **Tagged cross-compiled releases** — prebuilt binaries per OS/arch so adopters don't build from source.
 
 ---
 

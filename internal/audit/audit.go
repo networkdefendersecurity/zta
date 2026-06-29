@@ -127,17 +127,23 @@ func Evaluate(root string) map[string]Result {
 		res["AC-03"] = Result{Manual, "verify OS-level sandbox/egress out-of-band (e.g. zta run + container)"}
 	}
 
-	// OA-01 — comprehensive logging (wildcard logging hook)
+	// OA-01 — comprehensive logging. zta logs every gated decision by default;
+	// the legacy pack used a wildcard logging hook.
 	starLog := hasStarLog(s, "PreToolUse") || hasStarLog(s, "PostToolUse")
-	if starLog {
+	switch {
+	case ztaWired:
+		res["OA-01"] = Result{Pass, "zta logs every gated decision (.zta/logs/audit.jsonl)"}
+	case starLog:
 		res["OA-01"] = Result{Pass, "logging hook on * matcher"}
-	} else {
-		res["OA-01"] = Result{Fail, "no wildcard logging hook"}
+	default:
+		res["OA-01"] = Result{Fail, "no logging configured"}
 	}
 
-	// OA-02 — traceability
+	// OA-02 — traceability (session/agent attribution in the log records).
 	logSrc := readFile(root, ".claude", "hooks", "zt-log.sh")
 	switch {
+	case ztaWired:
+		res["OA-02"] = Result{Pass, "zta log records carry session + agent attribution"}
 	case starLog && strings.Contains(logSrc, "session") && strings.Contains(logSrc, "agent"):
 		res["OA-02"] = Result{Pass, "log records carry session + agent attribution"}
 	case starLog:

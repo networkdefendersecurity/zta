@@ -37,15 +37,12 @@ func TestEvaluate_ZtaWired(t *testing.T) {
 	})
 
 	res := Evaluate(root)
-	wantPass := []string{"IA-02", "AC-01", "AC-02", "IO-01", "IO-02", "IR-01", "GV-01", "GV-03"}
+	// A zta-wired repo logs every gated decision, so the logging controls pass too.
+	wantPass := []string{"IA-02", "AC-01", "AC-02", "OA-01", "OA-02", "IO-01", "IO-02", "IR-01", "GV-01", "GV-03"}
 	for _, id := range wantPass {
 		if got := res[id].Status; got != Pass {
 			t.Errorf("%s = %s, want PASS (%s)", id, got, res[id].Detail)
 		}
-	}
-	// zta has no logging tier yet, so logging controls should not pass.
-	if res["OA-01"].Status != Fail {
-		t.Errorf("OA-01 = %s, want FAIL (no logging hook)", res["OA-01"].Status)
 	}
 	if res["AC-03"].Status != Manual {
 		t.Errorf("AC-03 = %s, want MANUAL", res["AC-03"].Status)

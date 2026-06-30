@@ -23,13 +23,12 @@ const (
 // Event is an agent operation normalized into a single shape the engine can
 // evaluate regardless of which coding agent produced it. Adapters build these.
 type Event struct {
-	Action  Action         // what kind of operation
-	Command string         // shell command, for ActionExec
-	Path    string         // target file, for file actions
-	Content string         // content being written, for ActionFileWrite
-	Agent   string         // originating agent, e.g. "claude-code"
-	Session string         // agent session id, for log attribution (optional)
-	Raw     map[string]any // original tool input, for logging/debugging
+	Action  Action // what kind of operation
+	Command string // shell command, for ActionExec
+	Path    string // target file, for file actions
+	Content string // content being written, for ActionFileWrite
+	Agent   string // originating agent, e.g. "claude-code"
+	Session string // agent session id, for log attribution (optional)
 }
 
 // Decision is the engine's verdict on an Event.

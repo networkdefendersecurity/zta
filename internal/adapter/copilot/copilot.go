@@ -47,14 +47,13 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 		if cmd == "" {
 			cmd = allStrings(in.ToolArgs) // fall back: never miss the command text
 		}
-		ev = &policy.Event{Agent: "copilot", Action: policy.ActionExec, Command: cmd, Raw: in.ToolArgs}
+		ev = &policy.Event{Agent: "copilot", Action: policy.ActionExec, Command: cmd}
 	case strings.Contains(name, "edit"), strings.Contains(name, "write"), strings.Contains(name, "create"), strings.Contains(name, "patch"):
 		ev = &policy.Event{
 			Agent:   "copilot",
 			Action:  policy.ActionFileWrite,
 			Path:    firstString(in.ToolArgs, "path", "file_path", "filePath", "filename"),
 			Content: firstNonEmpty(firstString(in.ToolArgs, "content", "newContent", "new_str", "text"), allStrings(in.ToolArgs)),
-			Raw:     in.ToolArgs,
 		}
 	case strings.Contains(name, "view"), strings.Contains(name, "read"), strings.Contains(name, "cat"):
 		ev = &policy.Event{

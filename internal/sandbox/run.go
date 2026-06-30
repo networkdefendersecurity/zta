@@ -48,7 +48,7 @@ func Run(argv []string, opts Options) (int, error) {
 	}
 	defer os.RemoveAll(shimDir)
 
-	for _, t := range append(append([]string{}, defaultTargets...), opts.ExtraTargets...) {
+	for _, t := range defaultTargets {
 		if err := writeShim(shimDir, t, bin); err != nil {
 			return 2, err
 		}

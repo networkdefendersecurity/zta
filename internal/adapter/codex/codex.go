@@ -40,7 +40,7 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 		// patch text as write content (so secret-in-code rules still apply)
 		// rather than guessing a file_path key.
 		if patch := firstString(in.ToolInput, "input", "patch", "content"); patch != "" {
-			return &policy.Event{Agent: "codex", Action: policy.ActionFileWrite, Content: patch, Session: in.SessionID, Raw: in.ToolInput}, nil
+			return &policy.Event{Agent: "codex", Action: policy.ActionFileWrite, Content: patch, Session: in.SessionID}, nil
 		}
 		return nil, adapter.ErrPassthrough
 	}

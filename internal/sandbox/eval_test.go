@@ -3,6 +3,7 @@ package sandbox
 import (
 	"testing"
 
+	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 )
 
@@ -69,9 +70,9 @@ func TestEvalInvocation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			d := EvalInvocation(p, tc.name, tc.args)
+			d := engine.Evaluate(p, invocationEvent(tc.name, tc.args))
 			if blocked := !d.Allow; blocked != tc.wantBlock {
-				t.Fatalf("EvalInvocation(%q,%v) blocked=%v want %v (rule=%q)", tc.name, tc.args, blocked, tc.wantBlock, d.Rule)
+				t.Fatalf("evaluate(%q,%v) blocked=%v want %v (rule=%q)", tc.name, tc.args, blocked, tc.wantBlock, d.Rule)
 			}
 		})
 	}

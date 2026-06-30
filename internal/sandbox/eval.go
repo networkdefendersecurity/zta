@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/networkdefendersecurity/zta/internal/engine"
 	"github.com/networkdefendersecurity/zta/internal/policy"
 )
 
@@ -79,9 +78,4 @@ func invocationEvent(name string, args []string) *policy.Event {
 		Command: commandString(name, args),
 		Agent:   "sandbox",
 	}
-}
-
-// EvalInvocation evaluates an intercepted command against the policy.
-func EvalInvocation(p *policy.Policy, name string, args []string) policy.Decision {
-	return engine.Evaluate(p, invocationEvent(name, args))
 }

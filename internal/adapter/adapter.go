@@ -35,7 +35,7 @@ type Adapter interface {
 // the policy does not gate. Shared by the claude-code and codex adapters.
 func ClaudeStyleEvent(agent, toolName string, toolInput map[string]any) (*policy.Event, error) {
 	get := func(k string) string { s, _ := toolInput[k].(string); return s }
-	ev := &policy.Event{Agent: agent, Raw: toolInput}
+	ev := &policy.Event{Agent: agent}
 	switch toolName {
 	case "Bash":
 		ev.Action, ev.Command = policy.ActionExec, get("command")

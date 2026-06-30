@@ -7,9 +7,5 @@
 *.test
 *.out
 
-# Python bytecode
-__pycache__/
-*.pyc
-
 # Release build artifacts
 dist/

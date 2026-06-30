@@ -7,9 +7,8 @@ package sandbox
 
 // Options configures a sandboxed run (shim backend).
 type Options struct {
-	PolicyFile   string   // optional JSON policy override
-	Root         string   // project root for policy-integrity scoping
-	ExtraTargets []string // additional binaries to shim
+	PolicyFile string // optional JSON policy override
+	Root       string // project root for policy-integrity scoping
 }
 
 // DockerOptions configures the container backend of `zta run`.

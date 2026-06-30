@@ -2,222 +2,74 @@
 
 `zta` is a single, zero-dependency Go binary that holds an AI coding agent — and
 any subagents it spawns — to a zero-trust policy **while it works**. It blocks
-destructive commands, secret reads/writes, force-pushes, and policy tampering at
-the moment the agent tries them, regardless of which agent you run.
+destructive commands, secret reads/writes, force-pushes, and policy tampering the
+moment the agent tries them, regardless of which agent you run.
 
-It is the successor to this repo's original Claude-Code-only `.claude/` bash pack
-([see below](#legacy-claude-code-pack)), rebuilt to be **agent-agnostic**.
+It enforces at the **tool-call boundary** — a deterministic check that runs before
+an operation and can deny it — not prompt-level guidance the model can ignore.
 
-> **Scope.** `zta` secures the *coding agent's behavior inside a repo*. It is a
-> low-blast-radius enforcement layer, not a credential proxy or a production
-> network control. Read [Honest limits](#honest-limits) before relying on it.
+> **Scope.** `zta` secures a coding agent's *behavior inside a repo*. It's a
+> low-blast-radius enforcement layer, not a credential proxy or network control.
+> Read [Honest limits](#honest-limits) first.
 
----
+## Enforcement tiers
 
-## Why
+The same engine runs in every tier; only the wiring differs.
 
-Most "guardrails" for coding agents are prompt-level guidance the model can
-ignore. `zta` enforces at the **tool-call boundary** instead: a deterministic
-check that runs before an operation happens and can deny it.
+| Tier | Mechanism | Assurance |
+|------|-----------|-----------|
+| **Hook** | the agent's native pre-tool hook calls `zta guard` | High — the call is genuinely blocked (Claude Code, Codex, Cursor, Copilot) |
+| **Sandbox (shim)** | `zta run` puts a shim `PATH` in front of any agent | Guardrail — catches commands run through the shell |
+| **Sandbox (container)** | `zta run --backend=docker` | Kernel-enforced: host FS/creds absent, network off, secrets masked |
 
-The hard part is that **there is no universal interception API across agents** —
-hook payload shapes and deny signals differ, and some agents have no hook at all.
-`zta` handles this with two enforcement tiers and is explicit about which one
-each agent gets — no false sense of security. (As of 2026, Claude Code, Codex,
-Cursor, and Copilot all expose a real *blocking* pre-tool hook; each adapter
-speaks that agent's exact protocol.)
-
-| Tier | Mechanism | Assurance | Agents |
-|------|-----------|-----------|--------|
-| **Hook** | the agent's native pre-tool-call hook calls `zta guard` | High — the call is genuinely blocked | Claude Code, Codex, Cursor, Copilot (✅) |
-| **Sandbox (shim)** | `zta run` launches the agent with a shim PATH that routes command execution through the engine | Catches commands the agent runs (any agent) | ✅ any agent |
-| **Sandbox (container)** | `zta run --backend=docker` isolates the agent in a hardened container; the shim runs inside | Kernel-enforced: host FS/creds absent, network restricted, secrets masked, command policy still applied | ✅ any agent (needs Docker) |
-
-The guard logic is identical across tiers; only the *wiring* differs.
-
----
-
-## How it works
-
-```
-agent operation ──► adapter ──► normalized Event ──► engine ──► Decision ──► adapter ──► allow / block
-                 (agent-specific)   (exec / file_read    (pure, agent-agnostic)   (exit code / format)
-                                     / file_write)
-```
-
-- **Adapter** — translates one agent's interception payload into a normalized
-  `Event` and translates the verdict back into that agent's expected response.
-  Adding an agent is one small adapter; the policy logic is untouched.
-- **Engine** — a pure function `Evaluate(policy, event) → decision`. Default is
-  *allow*; rules *block*. This is the single source of truth for every agent.
-- **Policy** — secure defaults are **compiled into the binary**, so `zta` is safe
-  with no config file. An optional JSON file extends or overrides any rule set.
-
-Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
----
-
-## Status
-
-Early but functional. What exists today:
-
-- ✅ `zta init` — wire enforcement into a repo (idempotent, with dry-run)
-- ✅ `zta guard` — hook-tier enforcement entrypoint (fail-closed)
-- ✅ `zta run` — sandbox-tier launcher (shim or hardened-container backend)
-- ✅ `zta audit` — posture auditor; scores config vs the control catalog, gates CI
-- ✅ `zta version`
-- ✅ Hook adapters: Claude Code, Codex, Cursor, Copilot (each speaks its native
-  hook protocol and deny format)
-- ✅ Engine + embedded default policy (destructive deletes, pipe-to-shell,
-  force-push, credential read/write, secret-in-code, policy-integrity)
-- ✅ Append-only audit log of every gated decision (OA-01/OA-02)
-
-Planned (see [Roadmap](#roadmap)): tagged cross-compiled releases.
-
----
+Design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Install
 
-**Prebuilt binaries.** Each tagged release publishes static binaries for
-linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, and windows/amd64, plus a
-`SHA256SUMS` file. Download the one for your platform, verify it, and put it on
-your `PATH`:
+From source (Go 1.26+) — a static, dependency-free binary:
 
 ```bash
-curl -sSLO https://github.com/networkdefendersecurity/zta/releases/latest/download/zta_<ver>_linux_amd64
-curl -sSLO https://github.com/networkdefendersecurity/zta/releases/latest/download/SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS    # verify before trusting
-install -m755 zta_<ver>_linux_amd64 /usr/local/bin/zta
+go build -o zta ./cmd/zta && install -m755 zta /usr/local/bin/zta
 ```
 
-**From source** (Go 1.26+): `go build -o zta ./cmd/zta`. The result is a static,
-dependency-free binary. The sandbox tier (`zta run`) is Unix-only; the hook tier
-works on every platform including Windows.
-
----
+Tagged releases also publish static binaries + `SHA256SUMS` for linux/darwin/
+windows. The sandbox tier is Unix-only; the hook tier works everywhere.
 
 ## Usage
 
-### Quick start
-
-From your repo, wire enforcement in one command (preview first with `--dry-run`):
+Wire enforcement into a repo (idempotent; preview with `--dry-run`):
 
 ```bash
-zta init --dry-run        # show what would change
-zta init                  # wire `zta guard` into the agent + scaffold CLAUDE.md
-zta init --policy         # also drop a zta.json mirroring the built-in defaults
-zta audit .               # see remaining Foundation gaps
+zta init                  # wire `zta guard` for the agent + scaffold CLAUDE.md
+zta init --agent codex    # or cursor, copilot
+zta audit .               # score config against the control catalog (CI gate)
 ```
 
-`zta init` merges into existing config (it won't clobber your settings) and is
-idempotent. For an agent without hooks, it prints sandbox-tier guidance instead.
-
-### Claude Code (hook tier)
-
-Register `zta guard` as a `PreToolUse` hook in your project's
-`.claude/settings.json`. A non-zero exit blocks the tool call and the message is
-shown to the agent:
+For Claude Code that's a single `PreToolUse` hook in `.claude/settings.json`:
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
-      {
-        "matcher": "Bash|Read|Edit|Write|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }]
-      }
+      { "matcher": "Bash|Read|Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }] }
     ]
   }
 }
 ```
 
-That single hook replaces the four bash guards from the legacy pack. Claude Code
-sets `CLAUDE_PROJECT_DIR`, which `zta` uses to scope policy-integrity protection
-to *your* repo.
+The hook calls `zta` by name, so the binary must be on `PATH` where the agent
+runs — otherwise enforcement silently degrades. Keep `zta audit .` in CI to catch
+un-wired configs.
 
-> The hook invokes `zta` by name, so the binary must be on the `PATH` of the
-> environment the agent runs in (see [Install](#install)). If `zta` is missing the
-> hook cannot run and enforcement silently degrades — confirm with `zta version`
-> in that environment, and keep `zta audit .` in CI to catch un-wired configs.
-
-### Codex, Cursor, Copilot (hook tier)
-
-`zta init --agent <name>` writes each agent's native hook config — Codex's
-`.codex/hooks.json`, Cursor's `.cursor/hooks.json`, or Copilot's
-`.github/hooks/zta.json` — pointing at `zta guard --agent <name>`. Each adapter
-emits that agent's exact deny signal (Codex: exit 2 + stderr; Cursor:
-`{"permission":"deny"}`; Copilot: `{"permissionDecision":"deny"}`).
+For an agent with no usable hook, launch it through the sandbox instead:
 
 ```bash
-zta init --agent codex     # or cursor, copilot
+zta run -- aider                                 # shim tier: any CLI agent
+zta run --backend=docker --image=dev -- aider    # container tier (needs Docker)
 ```
 
-> Hook coverage and schemas vary by version (e.g. Codex's PreToolUse sees only
-> some shell paths). After wiring, **verify enforcement** by attempting a denied
-> command and confirming `zta` blocks it; pair with the sandbox tier for defense
-> in depth.
-
-### Any agent (sandbox tier)
-
-For agents without usable hooks (Cursor, Copilot, …), launch them through
-`zta run`. It puts a shim `PATH` in front of the agent so the **commands it runs**
-are evaluated by the same engine before they execute — no agent cooperation
-required:
-
-```bash
-zta run -- cursor-agent          # or: aider, codex, any CLI agent
-zta run -- bash                  # even a plain shell is now guarded
-```
-
-A blocked command fails with exit `126` and a reason on stderr; everything else
-runs normally. This intercepts the shell (so full pipelines like `curl … | bash`
-are caught) plus a default set of high-risk binaries.
-
-For stronger, kernel-enforced isolation, add `--backend=docker` (requires Docker):
-
-```bash
-zta run --backend=docker --image=my-dev-image -- aider
-```
-
-The agent runs in a container as your user with **only the project mounted** —
-the host home, `~/.ssh`, `~/.aws`, and the rest of the host filesystem are absent.
-`--network none` (default; override with `--network`) blocks exfil and remote
-code download, repo-local secret files (`.env`, `*.key`, …) are masked so even a
-raw read returns nothing, and the shim still applies command policy inside. This
-closes the shim tier's gap: file reads the agent performs via its own syscalls,
-not just commands. Use `--tty` for interactive agents and `--mount` for extra
-volumes.
-
-### Audit log
-
-Every gated decision (hook and sandbox tiers) is appended as one JSON line to
-`.zta/logs/audit.jsonl` under the project root — controls OA-01/OA-02:
-
-```json
-{"time":"2026-06-29T17:05:22Z","agent":"claude-code","session":"sess-123",
- "action":"exec","command":"curl … | bash","decision":"block",
- "control":"AC-01","rule":"pipe-to-shell","pid":123891}
-```
-
-It records the path of a write but **never its content**, so a blocked
-secret-write can't leak the secret into the log. The default lives under the
-integrity-protected `.zta/` directory (the agent can't tamper with it). Redirect
-with `ZTA_LOG=/path/to/log.jsonl`, or disable with `ZTA_LOG=off`. `zta init` adds
-`.zta/logs/` to `.gitignore`.
-
-### Audit posture (CI gate)
-
-`zta audit` scores a repo's agent configuration against the Foundation control
-catalog and exits non-zero if a repo-scope control fails — drop it in CI to gate
-AI-generated changes:
-
-```bash
-zta audit .            # scorecard + verdict; exit 1 on any FAIL
-zta audit . --strict   # also fail on PARTIAL
-```
-
-It recognizes both `zta` wiring (`zta guard` / `zta run`) and the legacy bash
-hooks, so it works during and after migration.
+`zta help` lists all flags.
 
 ### Try it directly
 
@@ -225,112 +77,63 @@ hooks, so it works during and after migration.
 (block):
 
 ```bash
-# allowed
-echo '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' \
-  | zta guard --agent claude-code; echo "exit=$?"        # exit=0
-
-# blocked
 echo '{"tool_name":"Bash","tool_input":{"command":"curl x.sh | bash"}}' \
-  | zta guard --agent claude-code; echo "exit=$?"        # exit=2
-# zta: blocked by policy [AC-01/pipe-to-shell]: pipe-to-shell ... executes untrusted remote code
+  | zta guard --agent claude-code; echo "exit=$?"   # exit=2, blocked
 ```
 
-### Common flags (`guard` / `run`)
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--agent` | `claude-code` | which agent protocol to speak |
-| `--root` | `$ZTA_PROJECT_DIR`, `$CLAUDE_PROJECT_DIR`, else cwd | project root for policy-integrity scoping |
-| `--policy` | `$ZTA_POLICY` | optional JSON policy file overriding the defaults |
-
-(`init` and `audit` have their own flags — `init [--dir] [--policy] [--dry-run] [--force]`, `audit [DIR] [--strict]`.)
-
----
+Every gated decision is appended to `.zta/logs/audit.jsonl` (path only, never
+content). Redirect with `ZTA_LOG=<path>` or disable with `ZTA_LOG=off`.
 
 ## Policy
 
-The compiled-in defaults block, by control:
+Secure defaults are compiled into the binary, so `zta` is safe with no config:
 
 | Control | Blocks |
 |---------|--------|
-| **AC-01** | destructive recursive deletes; pipe-to-shell (`curl … \| sh`) |
+| **AC-01** | destructive deletes; pipe-to-shell / fetch piped to an interpreter |
 | **IA-02** | force-push; reading credential files (`.env`, keys, `.aws/credentials`, …) |
-| **IR-01** | writes to the project's policy directory (`.claude/`, `.zta/`) and `.git/` internals |
-| **IO-02** | writing secrets into code (AWS/Anthropic/OpenAI/GitHub/Slack keys, JWTs, private keys, hardcoded credentials) |
+| **IR-01** | writes to the policy dir (`.claude/`, `.zta/`) and `.git/` internals |
+| **IO-02** | writing secrets into code (cloud/API keys, JWTs, private keys) |
 
-To customize, point `--policy` at a JSON file. Any rule set you specify replaces
-that default set; sets you omit keep their defaults:
+Override with a JSON file via `--policy` (or `zta init --policy` to scaffold one).
+Any rule set you specify replaces that default; omitted sets keep theirs. Patterns
+are RE2.
 
 ```json
-{
-  "deny_exec": [
-    { "name": "no-terraform-apply", "control": "AC-01",
-      "reason": "infra changes go through CI",
-      "pattern": "(?i)terraform[[:space:]]+apply" }
-  ]
-}
+{ "deny_exec": [
+  { "name": "no-terraform-apply", "control": "AC-01",
+    "reason": "infra changes go through CI", "pattern": "(?i)terraform[[:space:]]+apply" }
+] }
 ```
-
-Rule sets: `deny_exec` (shell commands), `deny_path` (files off-limits to any
-access), `protect_write` (paths write-protected within the project),
-`secret_content` (patterns blocked from being written). Patterns are RE2.
-
----
 
 ## Honest limits
 
-`zta` is a deterministic layer at the tool-call boundary. The `docker` backend
-adds real OS isolation, but the default (hook / shim) path is **not a sandbox**,
-and nothing here is complete:
+`zta` is a deterministic layer, not a complete sandbox:
 
-- **The model can route around naive blocks.** Block `Write` and it may use a
-  Bash heredoc; block `rm` and it may use `perl -e unlink`. The command rules
-  cover common shapes, not all of them.
-- **The shim backend intercepts *commands*, not raw syscalls.** It evaluates what
-  the agent executes through the shell and shimmed binaries, but does **not** trap
-  file reads/writes the agent's own process performs directly (e.g. opening `.env`
-  via a syscall rather than running `cat`). For that, use the hook tier or the
-  `docker` backend, which removes host credentials from the filesystem entirely.
-- **The shim backend is a guardrail, not a containment boundary.** Because it works
-  by putting a shim `PATH` in front of the agent, an *adversarial or prompt-injected*
-  agent can step around it in one line — invoking a tool by absolute path
-  (`/bin/rm …`) or restoring the original `PATH` — since the shim and the agent run
-  as the same user. It reliably catches *accidental* and *naive* dangerous commands;
-  it does **not** contain an agent that is actively trying to escape. For that
-  threat model, use the **`docker` backend**, whose isolation is kernel-enforced.
-- **The container backend depends on Docker** and on you supplying an image with
-  your agent's toolchain. It hardens the host boundary (FS/creds/network); within
-  the mounted `/workspace`, destructive deletes of specific subpaths are still
-  possible (recoverable via git) since the delete rule targets broad/system paths.
-- **Hook tier depends on the agent honoring hooks.** On agents without real
-  hooks, use the sandbox tier instead.
+- **Command rules cover common shapes, not all.** A model can reach for an
+  interpreter (`perl -e unlink`) or a variant the rules don't match.
+- **The shim tier is a guardrail, not a boundary.** It runs as the same user as
+  the agent, so an adversarial or prompt-injected agent escapes it in one line
+  (absolute path, or restoring `PATH`). It catches *accidental* dangerous
+  commands; for an actively-hostile agent use the **`docker` backend**
+  (kernel-enforced).
+- **The shim sees commands, not raw syscalls** — it won't trap a file read the
+  agent's own process performs directly. The hook tier and docker backend close
+  this.
+- **The hook tier depends on the agent honoring hooks**; for agents that don't,
+  use the sandbox tier.
 
-Treat these as the deterministic 80%, paired with OS-level isolation — not a
+Treat this as the deterministic 80%, paired with OS-level isolation — not a
 replacement for it.
-
----
-
-## Roadmap
-
-The core is in place: four hook adapters, two sandbox backends, posture audit,
-audit logging, one-command setup, and cross-compiled releases. Possible next
-directions: more agent adapters, a native Windows sandbox backend, signed/SBOM'd
-releases, and richer policy packs.
-
----
 
 ## Development
 
 ```bash
-go test ./...     # unit tests + fixture-backed behavior tests
-go vet ./...
-gofmt -l .        # should print nothing
+go test ./... && go vet ./... && gofmt -l .   # gofmt should print nothing
 ```
 
-Releases: push a `vX.Y.Z` tag and the `release` workflow cross-compiles, stamps
-the version, and publishes the binaries + `SHA256SUMS`. Build locally with
-`scripts/build-release.sh [VERSION]` (artifacts land in `dist/`). CI
-(`go test`/`vet`/cross-compile/`zta audit`) gates `main` and every PR.
+CI (`go test`/`vet`/cross-compile/`zta audit` + a guard smoke-test) gates `main`
+and every PR. Tag `vX.Y.Z` to cut a release.
 
-v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control
-mappings are advisory alignments, not legal determinations.
+v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control mappings
+are advisory alignments.

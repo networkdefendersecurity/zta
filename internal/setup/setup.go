@@ -174,7 +174,7 @@ func (p *Plan) wireEventHooks(path, agent string, events []string, opts Options)
 	for _, ev := range events {
 		arr, _ := hooks[ev].([]any)
 		arr = withoutZtaEntries(arr)
-		hooks[ev] = append(arr, map[string]any{"type": "command", "command": guardCmd(agent)})
+		hooks[ev] = append(arr, guardHookEntry(agent))
 	}
 	cfg["hooks"] = hooks
 
@@ -197,6 +197,21 @@ func (p *Plan) record(path string, cfg map[string]any, existed bool, detail stri
 }
 
 func guardCmd(agent string) string { return "zta guard --agent " + agent }
+
+// guardHookEntry builds the per-event hook entry that invokes `zta guard`.
+// Copilot's documented hook format keys the command by shell (bash/powershell);
+// the bare cross-platform "command" field is only confirmed in Copilot's Linux
+// cloud sandbox, so for the local CLI we set bash and powershell explicitly and
+// keep "command" as the documented fallback. The invocation is shell-agnostic
+// (no pipes, quotes, or env expansion), so the same string serves all three.
+// Keeping "command" also preserves idempotency: containsZtaGuard keys off it.
+func guardHookEntry(agent string) map[string]any {
+	cmd := guardCmd(agent)
+	if agent == "copilot" {
+		return map[string]any{"type": "command", "bash": cmd, "powershell": cmd, "command": cmd}
+	}
+	return map[string]any{"type": "command", "command": cmd}
+}
 
 func verifyNote(label string) string {
 	return fmt.Sprintf("%s hook wired. Verify it actually blocks: attempt a denied command (e.g. a force-push) and confirm zta denies it — hook schemas vary by version.", label)

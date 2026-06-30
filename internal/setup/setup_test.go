@@ -158,6 +158,44 @@ func TestInit_HookableAgents(t *testing.T) {
 	}
 }
 
+func TestInit_CopilotCrossShell(t *testing.T) {
+	dir := t.TempDir()
+	plan, err := BuildPlan(Options{Dir: dir, Agent: "copilot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := readJSON(t, filepath.Join(dir, ".github", "hooks", "zta.json"))
+	hooks, _ := cfg["hooks"].(map[string]any)
+	pre, _ := hooks["preToolUse"].([]any)
+	if len(pre) != 1 {
+		t.Fatalf("expected 1 preToolUse entry, got %d: %v", len(pre), pre)
+	}
+	entry, _ := pre[0].(map[string]any)
+	// Copilot's local CLI is keyed by shell; "command" is only a confirmed
+	// fallback in the Linux cloud sandbox. Set all three to the guard command.
+	const want = "zta guard --agent copilot"
+	for _, k := range []string{"bash", "powershell", "command"} {
+		if got, _ := entry[k].(string); got != want {
+			t.Errorf("copilot hook %q = %q, want %q", k, got, want)
+		}
+	}
+
+	// the extra keys must not break idempotency (detection keys off "command")
+	before, _ := os.ReadFile(filepath.Join(dir, ".github", "hooks", "zta.json"))
+	second, _ := BuildPlan(Options{Dir: dir, Agent: "copilot"})
+	if err := second.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, ".github", "hooks", "zta.json"))
+	if string(before) != string(after) {
+		t.Error("copilot init not idempotent with cross-shell keys")
+	}
+}
+
 // helpers
 
 func readJSON(t *testing.T, path string) map[string]any {

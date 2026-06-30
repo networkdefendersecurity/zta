@@ -156,6 +156,23 @@ with Docker mode and good repo hygiene for anything you don't fully trust.
 - Hook mode works on Linux, macOS, and Windows; **sandbox mode is Unix-only**.
 - Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+### bash vs. PowerShell (Windows)
+
+The `zta` binary is cross-platform and the hook enforcement fires the same way in
+both shells. The difference is in **what gets caught**:
+
+| | bash / zsh (Linux, macOS, WSL) | PowerShell (native Windows) |
+|---|---|---|
+| `zta init` / `zta guard` (hook tier) | ✅ | ✅ |
+| `zta run` (sandbox / Docker tier) | ✅ | ❌ Unix-only |
+| Secret scanning & `force-push` rules | ✅ | ✅ (shell-agnostic) |
+| Destructive / remote-code rules | ✅ | ⚠️ tuned for POSIX syntax — `Remove-Item -Recurse -Force`, `iwr … \| iex` and other PowerShell-native forms are **not** matched yet |
+
+**Recommendation:** on Windows, run your agent under **WSL or Git Bash** for full
+coverage. A native PowerShell session still gets hook enforcement, secret
+scanning, and the git/tamper guards, but the default destructive-command rules
+assume bash syntax, so it's the weaker setup.
+
 ## Development
 
 ```bash

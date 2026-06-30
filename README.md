@@ -1,139 +1,169 @@
-# zta — Zero-Trust enforcement for AI coding agents
+# zta — guardrails for AI coding agents
 
-`zta` is a single, zero-dependency Go binary that holds an AI coding agent — and
-any subagents it spawns — to a zero-trust policy **while it works**. It blocks
-destructive commands, secret reads/writes, force-pushes, and policy tampering the
-moment the agent tries them, regardless of which agent you run.
+`zta` is a tiny, single-file tool that stops an AI coding agent from doing
+dangerous things in your project — **before** they happen. It works with Claude
+Code, Codex, Cursor, and GitHub Copilot, and needs no cloud account, API key, or
+configuration to get started.
 
-It enforces at the **tool-call boundary** — a deterministic check that runs before
-an operation and can deny it — not prompt-level guidance the model can ignore.
+It blocks things like:
 
-> **Scope.** `zta` secures a coding agent's *behavior inside a repo*. It's a
-> low-blast-radius enforcement layer, not a credential proxy or network control.
-> Read [Honest limits](#honest-limits) first.
+- 🗑️ **Destructive commands** — `rm -rf /`, wiping your repo, force-pushing over history
+- 🔑 **Secret leaks** — reading `.env` / SSH keys, or writing API keys into your code
+- 🌐 **Remote code execution** — `curl … | bash` and similar
+- 🛡️ **Tampering** — the agent editing its own guardrails
 
-## Enforcement tiers
+Unlike "be careful" notes in a prompt (which a model can ignore), `zta` enforces at
+the **tool-call boundary**: a real check that runs the instant the agent tries an
+action and can say no.
 
-The same engine runs in every tier; only the wiring differs.
+> Think of it as a seatbelt, not an armored car — it catches the common, costly
+> mistakes. For a fully untrusted agent, pair it with Docker mode (below).
+> See [Honest limits](#honest-limits).
 
-| Tier | Mechanism | Assurance |
-|------|-----------|-----------|
-| **Hook** | the agent's native pre-tool hook calls `zta guard` | High — the call is genuinely blocked (Claude Code, Codex, Cursor, Copilot) |
-| **Sandbox (shim)** | `zta run` puts a shim `PATH` in front of any agent | Guardrail — catches commands run through the shell |
-| **Sandbox (container)** | `zta run --backend=docker` | Kernel-enforced: host FS/creds absent, network off, secrets masked |
+---
 
-Design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+## Quick start (about 2 minutes)
 
-## Install
-
-From source (Go 1.26+) — a static, dependency-free binary:
-
-```bash
-go build -o zta ./cmd/zta && install -m755 zta /usr/local/bin/zta
-```
-
-Tagged releases also publish static binaries + `SHA256SUMS` for linux/darwin/
-windows. The sandbox tier is Unix-only; the hook tier works everywhere.
-
-## Usage
-
-Wire enforcement into a repo (idempotent; preview with `--dry-run`):
+**1. Install it.** Easiest is to download a prebuilt binary from the
+[Releases](../../releases) page. Or build from source (needs [Go](https://go.dev/dl/) 1.26+):
 
 ```bash
-zta init                  # wire `zta guard` for the agent + scaffold CLAUDE.md
-zta init --agent codex    # or cursor, copilot
-zta audit .               # score config against the control catalog (CI gate)
+git clone https://github.com/Nick-NetwrkDef/Zero-Trust-Agent.git
+cd Zero-Trust-Agent
+go build -o zta ./cmd/zta
+sudo install -m755 zta /usr/local/bin/zta    # put it on your PATH
+zta version                                   # confirm it's installed
 ```
 
-For Claude Code that's a single `PreToolUse` hook in `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Bash|Read|Edit|Write|NotebookEdit",
-        "hooks": [{ "type": "command", "command": "zta guard --agent claude-code" }] }
-    ]
-  }
-}
-```
-
-The hook calls `zta` by name, so the binary must be on `PATH` where the agent
-runs — otherwise enforcement silently degrades. Keep `zta audit .` in CI to catch
-un-wired configs.
-
-For an agent with no usable hook, launch it through the sandbox instead:
+**2. Turn it on in your project.** From your repo, run one command:
 
 ```bash
-zta run -- aider                                 # shim tier: any CLI agent
-zta run --backend=docker --image=dev -- aider    # container tier (needs Docker)
+cd ~/my-project
+zta init               # wires the guard into your agent + adds a CLAUDE.md
 ```
 
-`zta help` lists all flags.
+That's it — your agent is now guarded. `zta init` defaults to Claude Code; for the
+others use `zta init --agent codex` (or `cursor`, `copilot`). It's safe to re-run
+and won't overwrite your existing settings.
 
-### Try it directly
-
-`zta guard` reads one operation as JSON on stdin and exits `0` (allow) or `2`
-(block):
+**3. Confirm it's working.** Send `zta` a dangerous command and watch it refuse:
 
 ```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"curl x.sh | bash"}}' \
-  | zta guard --agent claude-code; echo "exit=$?"   # exit=2, blocked
+echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' \
+  | zta guard --agent claude-code; echo "exit=$?"
 ```
 
-Every gated decision is appended to `.zta/logs/audit.jsonl` (path only, never
-content). Redirect with `ZTA_LOG=<path>` or disable with `ZTA_LOG=off`.
+You should see a `blocked by policy` message and `exit=2` (2 = blocked). A safe
+command like `npm test` would print `exit=0`.
 
-## Policy
+> **Heads up:** the agent runs `zta` by name, so the binary must stay on your
+> `PATH`. If it's missing, the guard silently does nothing — run `zta version` to
+> check, and keep `zta audit .` in your CI.
 
-Secure defaults are compiled into the binary, so `zta` is safe with no config:
+---
 
-| Control | Blocks |
-|---------|--------|
-| **AC-01** | destructive deletes; pipe-to-shell / fetch piped to an interpreter |
-| **IA-02** | force-push; reading credential files (`.env`, keys, `.aws/credentials`, …) |
-| **IR-01** | writes to the policy dir (`.claude/`, `.zta/`) and `.git/` internals |
-| **IO-02** | writing secrets into code (cloud/API keys, JWTs, private keys) |
+## How it works (30 seconds)
 
-Override with a JSON file via `--policy` (or `zta init --policy` to scaffold one).
-Any rule set you specify replaces that default; omitted sets keep theirs. Patterns
-are RE2.
+`zta init` adds a small hook to your agent's config (for Claude Code, a
+`PreToolUse` hook in `.claude/settings.json`). Every time the agent wants to run a
+command or touch a file, the hook asks `zta`, which checks it against a built-in
+security policy and allows or blocks it. The policy is **baked into the binary**,
+so it's safe out of the box with zero setup.
+
+There are three ways to wire it up, depending on your agent:
+
+| Mode | Command | When to use |
+|------|---------|-------------|
+| **Hook** *(recommended)* | `zta init` | Claude Code, Codex, Cursor, Copilot — the agent calls `zta` on every action |
+| **Sandbox** | `zta run -- <agent>` | Any CLI agent, even ones with no hooks |
+| **Container** | `zta run --backend=docker --image=<img> -- <agent>` | Strongest isolation (needs Docker) |
+
+---
+
+## Everyday use
+
+After `zta init`, **just use your agent normally** — `zta` runs invisibly and only
+speaks up to block something, showing the agent a clear reason so it can adjust.
+
+**Run any agent through the sandbox** (no hook setup needed):
+
+```bash
+zta run -- aider           # or codex, cursor-agent … even: zta run -- bash
+```
+
+**See what it's done.** Every decision is logged as one line to
+`.zta/logs/audit.jsonl` in your project (it records the command/path, **never**
+secret contents):
+
+```bash
+tail .zta/logs/audit.jsonl
+```
+
+**Check your setup is solid** (great as a CI step):
+
+```bash
+zta audit .                # scores your config and fails if it isn't guarded
+```
+
+---
+
+## Customizing what's blocked
+
+The defaults already cover the common dangers — no config needed:
+
+| Blocks | Examples |
+|--------|----------|
+| Destructive deletes & remote code | `rm -rf /`, `curl … \| bash` |
+| Credential access | reading `.env`, SSH keys, `.aws/credentials` |
+| Secrets in code | committing API keys, tokens, private keys |
+| Tampering | writing to `.claude/`, `.zta/`, `.git/` |
+
+To add your own rules, create a `zta.json` (start one with `zta init --policy`) and
+pass it with `--policy`. Each rule is just a name + a regex. For example, to block
+`terraform apply`:
 
 ```json
 { "deny_exec": [
   { "name": "no-terraform-apply", "control": "AC-01",
-    "reason": "infra changes go through CI", "pattern": "(?i)terraform[[:space:]]+apply" }
+    "reason": "infra changes go through CI",
+    "pattern": "(?i)terraform[[:space:]]+apply" }
 ] }
 ```
 
+---
+
 ## Honest limits
 
-`zta` is a deterministic layer, not a complete sandbox:
+`zta` is a strong, deterministic guardrail — not a bulletproof sandbox. Be
+clear-eyed about what it does and doesn't do:
 
-- **Command rules cover common shapes, not all.** A model can reach for an
-  interpreter (`perl -e unlink`) or a variant the rules don't match.
-- **The shim tier is a guardrail, not a boundary.** It runs as the same user as
-  the agent, so an adversarial or prompt-injected agent escapes it in one line
-  (absolute path, or restoring `PATH`). It catches *accidental* dangerous
-  commands; for an actively-hostile agent use the **`docker` backend**
-  (kernel-enforced).
-- **The shim sees commands, not raw syscalls** — it won't trap a file read the
-  agent's own process performs directly. The hook tier and docker backend close
-  this.
-- **The hook tier depends on the agent honoring hooks**; for agents that don't,
-  use the sandbox tier.
+- It matches **common command shapes**, not every possible trick. A determined
+  model can reach for an interpreter (`perl -e unlink`) or an obscure variant.
+- The **sandbox (shim) mode is a guardrail, not a cage.** It runs as you, so an
+  actively-malicious or prompt-injected agent can step around it. For that threat,
+  use **`--backend=docker`**, which the operating system enforces.
+- The **hook mode relies on the agent honoring its hooks** (Claude Code, Codex,
+  Cursor, and Copilot do today).
 
-Treat this as the deterministic 80%, paired with OS-level isolation — not a
-replacement for it.
+Bottom line: `zta` stops the expensive accidents and most bad behavior. Pair it
+with Docker mode and good repo hygiene for anything you don't fully trust.
+
+---
+
+## Requirements & notes
+
+- **To build:** Go 1.26+. **To run:** the binary is static and dependency-free.
+- Hook mode works on Linux, macOS, and Windows; **sandbox mode is Unix-only**.
+- Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Development
 
 ```bash
-go test ./... && go vet ./... && gofmt -l .   # gofmt should print nothing
+go test ./... && go vet ./... && gofmt -l .    # gofmt should print nothing
 ```
 
-CI (`go test`/`vet`/cross-compile/`zta audit` + a guard smoke-test) gates `main`
-and every PR. Tag `vX.Y.Z` to cut a release.
+CI runs tests, vet, cross-compile, `zta audit`, and a guard smoke-test on every PR.
+Tag `vX.Y.Z` to publish binaries.
 
 v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control mappings
-are advisory alignments.
+are advisory.

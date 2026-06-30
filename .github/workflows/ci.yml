@@ -35,3 +35,23 @@ jobs:
 
       - name: Posture audit (gate the build)
         run: go run ./cmd/zta audit .
+
+      - name: Guard smoke test (wired hook actually blocks)
+        env:
+          ZTA_LOG: off
+        run: |
+          # The posture audit only checks that `zta guard` is *wired*; this
+          # verifies the binary, on PATH as the hook invokes it, actually
+          # enforces — catching a hook that would silently no-op if zta were
+          # missing or broken.
+          go build -o "$RUNNER_TEMP/zta" ./cmd/zta
+          export PATH="$RUNNER_TEMP:$PATH"
+          code=0
+          echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' \
+            | zta guard --agent claude-code || code=$?
+          test "$code" -eq 2 || { echo "denied op: expected block (exit 2), got $code"; exit 1; }
+          code=0
+          echo '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' \
+            | zta guard --agent claude-code || code=$?
+          test "$code" -eq 0 || { echo "safe op: expected allow (exit 0), got $code"; exit 1; }
+          echo "guard smoke test passed: denied op blocked, safe op allowed"

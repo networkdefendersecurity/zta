@@ -135,6 +135,11 @@ That single hook replaces the four bash guards from the legacy pack. Claude Code
 sets `CLAUDE_PROJECT_DIR`, which `zta` uses to scope policy-integrity protection
 to *your* repo.
 
+> The hook invokes `zta` by name, so the binary must be on the `PATH` of the
+> environment the agent runs in (see [Install](#install)). If `zta` is missing the
+> hook cannot run and enforcement silently degrades — confirm with `zta version`
+> in that environment, and keep `zta audit .` in CI to catch un-wired configs.
+
 ### Codex, Cursor, Copilot (hook tier)
 
 `zta init --agent <name>` writes each agent's native hook config — Codex's

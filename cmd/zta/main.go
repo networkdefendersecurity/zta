@@ -40,6 +40,8 @@ func main() {
 		cmdRun(os.Args[2:])
 	case "audit":
 		cmdAudit(os.Args[2:])
+	case "log":
+		cmdLog(os.Args[2:])
 	case "__shim": // internal: invoked by sandbox shim wrappers, not by users
 		cmdShim(os.Args[2:])
 	case "version", "--version", "-v":
@@ -61,6 +63,7 @@ Usage:
   zta guard --agent <name> [--root DIR] [--policy FILE]   evaluate one operation from stdin (hook tier)
   zta run [--backend shim|docker] [--image IMG] -- <cmd...>  launch a command in the sandbox tier
   zta audit [DIR] [--strict]                              score agent config against the control catalog
+  zta log [--no-follow] [--blocked|--allowed] [-n N]      tail the decision audit log (live by default)
   zta version                                             print version
   zta help                                                show this help
 
@@ -229,6 +232,32 @@ func cmdAudit(args []string) {
 		root = rest[0]
 	}
 	os.Exit(audit.Run(os.Stdout, root, *strict, isTTY(os.Stdout)))
+}
+
+// cmdLog tails the decision audit log, allowing or block-only filtering. It
+// follows live by default (like `tail -f`); --no-follow prints and exits.
+func cmdLog(args []string) {
+	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	root := fs.String("root", defaultRoot(), "project root used to locate the audit log")
+	noFollow := fs.Bool("no-follow", false, "print recent decisions and exit instead of tailing live")
+	blocked := fs.Bool("blocked", false, "show only blocked decisions")
+	allowed := fs.Bool("allowed", false, "show only allowed decisions")
+	n := fs.Int("n", 10, "show the last N matching decisions before following (0 = all)")
+	asJSON := fs.Bool("json", false, "emit raw JSONL instead of the human-readable form")
+	fs.Parse(args)
+
+	err := auditlog.View(os.Stdout, auditlog.ViewOptions{
+		Root:        *root,
+		Follow:      !*noFollow,
+		Lines:       *n,
+		OnlyBlocked: *blocked,
+		OnlyAllowed: *allowed,
+		JSON:        *asJSON,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zta log: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // cmdShim is the internal entrypoint each sandbox shim wrapper invokes. It

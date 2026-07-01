@@ -91,13 +91,20 @@ speaks up to block something, showing the agent a clear reason so it can adjust.
 zta run -- aider           # or codex, cursor-agent … even: zta run -- bash
 ```
 
-**See what it's done.** Every decision is logged as one line to
+**See what's allowed vs blocked.** Every decision is logged as one line to
 `.zta/logs/audit.jsonl` in your project (it records the command/path, **never**
-secret contents):
+secret contents). Watch them stream in with `zta log`, which tails the log live
+by default:
 
 ```bash
-tail .zta/logs/audit.jsonl
+zta log                # follow decisions live (tail -f style)
+zta log --blocked      # only what was blocked (or --allowed)
+zta log --no-follow    # print recent decisions and exit
+zta log -n 50          # show the last 50 first;  --json for raw JSONL
 ```
+
+Each line reads `time · DECISION · action · command/path`, with the
+`[control/rule]` that fired shown on blocks.
 
 **Check your setup is solid** (great as a CI step):
 

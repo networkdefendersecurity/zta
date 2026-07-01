@@ -64,6 +64,11 @@ func Log(root string, ev *policy.Event, d policy.Decision) {
 	f.Write(append(line, '\n'))
 }
 
+// Path returns the resolved audit-log file path for root, or "" when logging is
+// disabled (ZTA_LOG=off). It mirrors the destination Log writes to, so readers
+// (e.g. `zta log`) and the writer agree on a single location.
+func Path(root string) string { return destination(root) }
+
 // destination resolves the log file path, or "" when logging is disabled. The
 // default lives under the integrity-protected .zta/ directory so the agent
 // cannot tamper with it.

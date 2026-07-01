@@ -62,6 +62,37 @@ command like `npm test` would print `exit=0`.
 
 ---
 
+## Upgrading
+
+`zta` is a single binary, so upgrading is a drop-in swap — releases are additive,
+with no breaking changes or config migration. Your existing wiring keeps working
+because the hook it installs (`zta guard --agent <name>`) is stable across
+versions, so **you don't need to re-run `zta init`**.
+
+**Prebuilt binary:** download the new version for your platform from
+[Releases](../../releases), replace the old one on your `PATH`, and confirm:
+
+```bash
+zta version                     # should print the new version
+sha256sum -c SHA256SUMS         # optional: verify the download
+```
+
+**From source:**
+
+```bash
+git pull && go build -o zta ./cmd/zta
+sudo install -m755 zta /usr/local/bin/zta
+```
+
+> **Copilot only:** if you wired Copilot before v0.2.1, force a rewrite to pick up
+> the shell-keyed (`bash`/`powershell`) hook — a plain `zta init` skips an
+> already-wired repo:
+> ```bash
+> zta init --agent copilot --force
+> ```
+
+---
+
 ## How it works (30 seconds)
 
 `zta init` adds a small hook to your agent's config (for Claude Code, a

@@ -115,7 +115,7 @@ There are three ways to wire it up, depending on your agent:
 |------|---------|-------------|
 | **Hook** *(recommended)* | `zta init` | Claude Code, Codex, Cursor, Copilot — the agent calls `zta` on every action |
 | **Sandbox** | `zta run -- <agent>` | Any CLI agent, even ones with no hooks |
-| **Container** | `zta run --backend=docker --image=<img> -- <agent>` | Strongest isolation (needs Docker) |
+| **Container** | `zta run --backend=docker --image=<img> -- <agent>` | Strongest isolation (needs Docker), e.g. `zta run --backend=docker --image=node:20 -- claude` |
 
 ---
 
@@ -226,6 +226,12 @@ go test ./... && go vet ./... && gofmt -l .    # gofmt should print nothing
 ```
 
 CI runs tests, vet, cross-compile, `zta audit`, and a guard smoke-test on every PR.
+
+To check that everything the policy is supposed to block is actually
+blocked — every rule, every evasion shape from the security audit, every
+adapter, plus a live-agent checklist against a real hook — see
+[`redteam/README.md`](redteam/README.md).
+
 Tag `vX.Y.Z` to publish binaries.
 
 v0.1 — derived from Anthropic, *Zero Trust for AI Agents* (2026). Control mappings

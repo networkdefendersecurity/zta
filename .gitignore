@@ -9,3 +9,6 @@
 
 # Release build artifacts
 dist/
+
+# redteam kit scratch state
+redteam/__pycache__/

@@ -266,3 +266,50 @@ after migration. Controls requiring out-of-band verification are reported
 agent identity, org incident response) are `N/A`. Logging controls (OA-01/02)
 currently rely on the legacy logging hook — they will be satisfied by zta's own
 logging once that lands.
+
+## Known gaps
+
+### IO-01: WebFetch is not gated by the engine
+
+`zta audit` currently scores IO-01 `PASS` once `.claude/settings.json` lists
+`WebFetch` under `permissions.ask` (or `deny`), or a `.claude/agents/researcher.md`
+scoped subagent exists. That's a real control — Claude Code's native permission
+system will prompt/block before any WebFetch call — but it's mediated entirely
+by Claude Code, not by zta. zta itself has no engine-level enforcement or
+audit-log coverage of network fetches today:
+
+- `policy.Event`'s `Action` enum (`internal/policy/policy.go`) only has
+  `ActionExec`, `ActionFileRead`, `ActionFileWrite` — no network action.
+- `engine.Evaluate()` (`internal/engine/engine.go`) has no case for a network
+  request, so even if an event carried a URL there's no rule to check it
+  against.
+- The Claude Code adapter's `ClaudeStyleEvent()`
+  (`internal/adapter/adapter.go`) has no `"WebFetch"` case, so a WebFetch tool
+  call event would fall through as `ErrPassthrough` (ungated) today.
+- The hardcoded `PreToolUse` matcher written by `zta init`
+  (`internal/setup/setup.go`) is `"Bash|Read|Edit|Write|NotebookEdit"` — it
+  doesn't include `WebFetch`, so `zta guard` never even sees these calls.
+
+To close this for real:
+
+1. Add `ActionNetworkFetch` (or similar) to the `Action` enum in
+   `internal/policy/policy.go`.
+2. Add a `DenyURL []*Rule` rule set to `Policy` (mirroring `DenyExec` /
+   `DenyPath`), with default SSRF-style rules in `internal/policy/defaults.go`:
+   block localhost/loopback, private IP ranges (`10.x`, `172.16-31.x`,
+   `192.168.x`), and cloud metadata endpoints (`169.254.169.254`).
+3. Add an `ActionNetworkFetch` case to `engine.Evaluate()` that checks the
+   event's URL against `DenyURL`.
+4. Add a `case "WebFetch":` to `adapter.ClaudeStyleEvent()` that extracts the
+   `url` field from `tool_input`, per Claude Code's hook schema
+   (`{"tool_name":"WebFetch","tool_input":{"url":"..."}}`).
+5. Update the matcher in `internal/setup/setup.go` to
+   `"Bash|Read|Edit|Write|NotebookEdit|WebFetch"` so the `PreToolUse` hook
+   actually fires for WebFetch calls.
+6. Once wired, `internal/auditlog` starts capturing WebFetch calls too, giving
+   OA-01/02 coverage of network egress instead of just the Claude-native
+   ask-prompt.
+
+Codex/Cursor/Copilot have no WebFetch-equivalent tool today, so this is
+Claude-Code-specific until another adapter's agent grows a comparable fetch
+tool.

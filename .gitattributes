@@ -1,0 +1,5 @@
+# Exclude from `git archive` output (this is what GitHub uses to build the
+# "Source code (zip/tar.gz)" links it auto-attaches to every release) — the
+# redteam kit is a dev/test tool, not something end users installing zta need.
+# It stays in the repo and on GitHub's normal file browser either way.
+redteam/ export-ignore

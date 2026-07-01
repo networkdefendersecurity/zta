@@ -25,7 +25,15 @@ action and can say no.
 ## Quick start (about 2 minutes)
 
 **1. Install it.** Easiest is to download a prebuilt binary from the
-[Releases](../../releases) page. Or build from source (needs [Go](https://go.dev/dl/) 1.26+):
+[Releases](../../releases) page:
+
+```bash
+chmod +x zta_linux_amd64
+sudo install -m755 zta_linux_amd64 /usr/local/bin/zta
+zta version                                   # confirm it's installed
+```
+
+Or build from source (needs [Go](https://go.dev/dl/) 1.26+):
 
 ```bash
 git clone https://github.com/Nick-NetwrkDef/Zero-Trust-Agent.git

@@ -36,8 +36,8 @@ zta version                                   # confirm it's installed
 Or build from source (needs [Go](https://go.dev/dl/) 1.26+):
 
 ```bash
-git clone https://github.com/Nick-NetwrkDef/Zero-Trust-Agent.git
-cd Zero-Trust-Agent
+git clone https://github.com/networkdefendersecurity/zta.git
+cd zta
 go build -o zta ./cmd/zta
 sudo install -m755 zta /usr/local/bin/zta    # put it on your PATH
 zta version                                   # confirm it's installed

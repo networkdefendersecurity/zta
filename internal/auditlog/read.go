@@ -155,8 +155,10 @@ func matches(rec Record, opts ViewOptions) bool {
 //	<time>  BLOCK  exec        rm -rf /            [AC-01/destructive-delete]
 func human(rec Record) string {
 	target := rec.Command
-	if target == "" {
-		target = rec.Path
+	for _, alt := range []string{rec.Path, rec.URL, rec.Tool} {
+		if target == "" {
+			target = alt
+		}
 	}
 	line := fmt.Sprintf("%s  %-5s  %-10s  %s", rec.Time, strings.ToUpper(rec.Decision), rec.Action, target)
 	if rec.Decision == "block" && (rec.Control != "" || rec.Rule != "") {

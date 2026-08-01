@@ -77,6 +77,36 @@ func Default() *Policy {
 				Pattern: `(^|/)\.git/`,
 			},
 		},
+		DenyNetwork: []*Rule{
+			{
+				Name:    "cloud-metadata",
+				Control: "SC-07",
+				Reason:  "SSRF to a cloud instance-metadata endpoint (credential theft)",
+				// The well-known link-local metadata IPs/hostnames across AWS, GCP,
+				// Azure, Alibaba, plus AWS's IMDS IPv6 address.
+				Pattern: `(?i)(169\.254\.169\.254|metadata\.google\.internal|100\.100\.100\.200|fd00:ec2::254)`,
+			},
+			{
+				Name:    "internal-address",
+				Control: "SC-07",
+				Reason:  "fetch of an internal/loopback address (SSRF to a private service)",
+				// Anchored to the host position (scheme://[user@]HOST) so a private
+				// address in the host is blocked while the same digits in a path or
+				// query are not. Covers loopback, RFC1918, and link-local ranges.
+				Pattern: `(?i)^[a-z][a-z0-9+.-]*://([^@/]*@)?(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0\.0|10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+|169\.254\.[0-9]+\.[0-9]+|\[?::1\]?)([:/]|$)`,
+			},
+			{
+				Name:    "non-web-scheme",
+				Control: "SC-07",
+				Reason:  "non-web URL scheme in a fetch (local-file/SSRF vector, e.g. file://)",
+				// WebFetch tools speak http(s); these schemes reach the local
+				// filesystem or internal services and bypass the file-read guard.
+				Pattern: `(?i)^(file|gopher|dict|ldap|ldaps|jar|netdoc|tftp):`,
+			},
+		},
+		// DenyMCP is empty by default: MCP tool semantics vary per server, so there
+		// is no safe universal block. Populating it via a policy file lets a repo
+		// deny specific servers/tools by name; the arm always logs MCP calls.
 		SecretContent: []*Rule{
 			{Name: "aws-access-key", Control: "IO-02", Reason: "AWS access key id", Pattern: `AKIA[0-9A-Z]{16}`},
 			{Name: "anthropic-key", Control: "IO-02", Reason: "Anthropic API key", Pattern: `sk-ant-[A-Za-z0-9_-]{20,}`},

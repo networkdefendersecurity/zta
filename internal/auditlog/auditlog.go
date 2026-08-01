@@ -24,6 +24,8 @@ type Record struct {
 	Action   string `json:"action"`
 	Command  string `json:"command,omitempty"`
 	Path     string `json:"path,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Tool     string `json:"tool,omitempty"`
 	Decision string `json:"decision"` // "allow" or "block"
 	Control  string `json:"control,omitempty"`
 	Rule     string `json:"rule,omitempty"`
@@ -44,6 +46,8 @@ func Log(root string, ev *policy.Event, d policy.Decision) {
 		Action:   string(ev.Action),
 		Command:  truncate(ev.Command),
 		Path:     ev.Path, // path only — never ev.Content
+		URL:      truncate(ev.URL),
+		Tool:     ev.Tool,
 		Decision: decision(d),
 		Control:  d.Control,
 		Rule:     d.Rule,

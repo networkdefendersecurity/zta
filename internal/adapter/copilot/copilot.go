@@ -61,6 +61,14 @@ func (Adapter) Parse(r io.Reader) (*policy.Event, error) {
 			Action: policy.ActionFileRead,
 			Path:   firstString(in.ToolArgs, "path", "file_path", "filePath", "filename"),
 		}
+	case strings.Contains(name, "fetch"), strings.Contains(name, "web"):
+		ev = &policy.Event{
+			Agent:  "copilot",
+			Action: policy.ActionNetwork,
+			URL:    firstString(in.ToolArgs, "url", "uri", "href"),
+		}
+	case strings.HasPrefix(name, "mcp"):
+		ev = &policy.Event{Agent: "copilot", Action: policy.ActionMCP, Tool: in.ToolName}
 	default:
 		return nil, adapter.ErrPassthrough
 	}

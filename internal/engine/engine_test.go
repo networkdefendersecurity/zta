@@ -78,6 +78,22 @@ func TestEvaluate(t *testing.T) {
 		{"write private key", "/repo", policy.Event{Action: policy.ActionFileWrite, Path: "/repo/cfg.go", Content: "-----BEGIN RSA PRIVATE KEY-----"}, true},
 		{"write generic password", "/repo", policy.Event{Action: policy.ActionFileWrite, Path: "/repo/cfg.go", Content: `password = "hunter2hunter2"`}, true},
 		{"write clean content", "/repo", policy.Event{Action: policy.ActionFileWrite, Path: "/repo/cfg.go", Content: "const Timeout = 30"}, false},
+
+		// network (WebFetch) rules
+		{"fetch aws metadata", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"}, true},
+		{"fetch gcp metadata host", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "http://metadata.google.internal/computeMetadata/v1/"}, true},
+		{"fetch localhost", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "http://localhost:8080/admin"}, true},
+		{"fetch loopback ip", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "https://127.0.0.1/"}, true},
+		{"fetch rfc1918", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "http://192.168.1.1/"}, true},
+		{"fetch link-local", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "http://169.254.10.5/"}, true},
+		{"fetch file scheme", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "file:///etc/passwd"}, true},
+		{"fetch gopher scheme", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "gopher://127.0.0.1:6379/_INFO"}, true},
+		{"fetch public https allowed", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "https://docs.python.org/3/library/json.html"}, false},
+		{"fetch path mentioning localhost allowed", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "https://example.com/localhost/guide"}, false},
+		{"fetch host with public 172 allowed", "/repo", policy.Event{Action: policy.ActionNetwork, URL: "https://172.15.0.1/"}, false},
+
+		// MCP: no default rules, so calls are allowed (but evaluated + logged)
+		{"mcp call allowed by default", "/repo", policy.Event{Action: policy.ActionMCP, Tool: "mcp__github__create_issue"}, false},
 	}
 
 	for _, tc := range cases {
@@ -89,5 +105,21 @@ func TestEvaluate(t *testing.T) {
 					tc.name, blocked, tc.wantBlock, d.Rule, d.Reason)
 			}
 		})
+	}
+}
+
+// TestDenyMCPOptIn verifies a policy file can gate specific MCP tools by name,
+// while unlisted tools still pass.
+func TestDenyMCPOptIn(t *testing.T) {
+	p := policy.Default()
+	p.DenyMCP = []*policy.Rule{{Name: "no-shell-mcp", Control: "AC-01", Reason: "shell MCP server denied", Pattern: `^mcp__shell__`}}
+	if err := p.Compile(); err != nil {
+		t.Fatal(err)
+	}
+	if d := Evaluate(p, &policy.Event{Action: policy.ActionMCP, Tool: "mcp__shell__exec"}); d.Allow {
+		t.Error("mcp__shell__exec should be blocked by opt-in DenyMCP rule")
+	}
+	if d := Evaluate(p, &policy.Event{Action: policy.ActionMCP, Tool: "mcp__github__create_issue"}); !d.Allow {
+		t.Error("mcp__github__create_issue should pass (not matched)")
 	}
 }

@@ -59,12 +59,12 @@ func BuildPlan(opts Options) (*Plan, error) {
 	switch opts.Agent {
 	case "claude-code":
 		// Claude Code: PreToolUse hooks in .claude/settings.json.
-		if err := p.wireClaudeStyle(filepath.Join(dir, ".claude", "settings.json"), "claude-code", "Bash|Read|Edit|Write|NotebookEdit", opts); err != nil {
+		if err := p.wireClaudeStyle(filepath.Join(dir, ".claude", "settings.json"), "claude-code", "Bash|Read|Edit|Write|NotebookEdit|WebFetch|mcp__.*", opts); err != nil {
 			return nil, err
 		}
 	case "codex":
 		// Codex: Claude-compatible PreToolUse hooks in .codex/hooks.json.
-		if err := p.wireClaudeStyle(filepath.Join(dir, ".codex", "hooks.json"), "codex", "Bash|apply_patch", opts); err != nil {
+		if err := p.wireClaudeStyle(filepath.Join(dir, ".codex", "hooks.json"), "codex", "Bash|apply_patch|mcp__.*", opts); err != nil {
 			return nil, err
 		}
 		p.Notes = append(p.Notes, verifyNote("Codex"))

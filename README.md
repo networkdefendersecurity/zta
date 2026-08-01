@@ -163,6 +163,12 @@ The defaults already cover the common dangers — no config needed:
 | Credential access | reading `.env`, SSH keys, `.aws/credentials` |
 | Secrets in code | committing API keys, tokens, private keys |
 | Tampering | writing to `.claude/`, `.zta/`, `.git/` |
+| Web-fetch SSRF | fetching `169.254.169.254` (cloud metadata), `localhost`/private IPs, `file://` URLs |
+
+Beyond shell commands and file access, the guard also gates the agent's
+**`WebFetch`** (blocking the SSRF shapes above) and logs every **MCP** tool call
+(`mcp__*`). MCP has no default blocks — its tool semantics vary per server — but
+you can deny specific servers/tools by name with a `deny_mcp` rule.
 
 To add your own rules, create a `zta.json` (start one with `zta init --policy`) and
 pass it with `--policy`. Each rule is just a name + a regex. For example, to block
@@ -190,6 +196,12 @@ clear-eyed about what it does and doesn't do:
   use **`--backend=docker`**, which the operating system enforces.
 - The **hook mode relies on the agent honoring its hooks** (Claude Code, Codex,
   Cursor, and Copilot do today).
+- **Web-fetch gating covers SSRF shapes** (metadata endpoints, internal
+  addresses, non-web schemes), **not** exfiltration to an arbitrary public host —
+  there's no reliable deterministic signal for that, so it's left to the sandbox
+  tier's `--network none`. Likewise, only the agent's *declared* `WebFetch`/MCP
+  tool calls are seen; a raw socket opened inside a `Bash` command is the shell
+  guard's job, and true network containment belongs to Docker mode.
 
 Bottom line: `zta` stops the expensive accidents and most bad behavior. Pair it
 with Docker mode and good repo hygiene for anything you don't fully trust.

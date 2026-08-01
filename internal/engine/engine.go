@@ -34,6 +34,16 @@ func Evaluate(p *policy.Policy, e *policy.Event) policy.Decision {
 				return d
 			}
 		}
+
+	case policy.ActionNetwork:
+		if d, blocked := matchSet(p.DenyNetwork, e.URL); blocked {
+			return d
+		}
+
+	case policy.ActionMCP:
+		if d, blocked := matchSet(p.DenyMCP, e.Tool); blocked {
+			return d
+		}
 	}
 	return policy.Decision{Allow: true}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/networkdefendersecurity/zta/internal/policy"
 )
@@ -47,7 +48,14 @@ func ClaudeStyleEvent(agent, toolName string, toolInput map[string]any) (*policy
 		ev.Action, ev.Path, ev.Content = policy.ActionFileWrite, get("file_path"), get("new_string")
 	case "NotebookEdit":
 		ev.Action, ev.Path, ev.Content = policy.ActionFileWrite, get("notebook_path"), get("new_source")
+	case "WebFetch":
+		ev.Action, ev.URL = policy.ActionNetwork, get("url")
 	default:
+		// MCP tool calls are named mcp__<server>__<tool>; gate them by name.
+		if strings.HasPrefix(toolName, "mcp__") {
+			ev.Action, ev.Tool = policy.ActionMCP, toolName
+			return ev, nil
+		}
 		return nil, ErrPassthrough
 	}
 	return ev, nil

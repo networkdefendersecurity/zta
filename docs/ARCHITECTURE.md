@@ -33,16 +33,18 @@ Every agent operation an adapter cares about collapses into one shape
 
 | Field | Meaning |
 |-------|---------|
-| `Action` | `exec`, `file_read`, or `file_write` |
+| `Action` | `exec`, `file_read`, `file_write`, `network`, or `mcp` |
 | `Command` | shell command, for `exec` |
 | `Path` | target file, for file actions |
 | `Content` | content being written, for `file_write` (used by secret scanning) |
+| `URL` | target URL, for `network` (e.g. `WebFetch`) |
+| `Tool` | tool name, for `mcp` (e.g. `mcp__github__create_issue`) |
 | `Agent` | originating agent id |
 | `Raw` | original tool input, for logging/debugging |
 
-If a future agent introduces an operation class that doesn't fit (e.g. a network
-request), that becomes a new `Action` plus the rules that evaluate it — added in
-one place, inherited by all adapters.
+A new operation class (the `network` and `mcp` actions were added this way)
+becomes a new `Action` plus the rules that evaluate it — added in one place,
+inherited by all adapters.
 
 ## The engine
 
@@ -53,6 +55,8 @@ side-effect-free. Decision order:
 2. **`file_read` / `file_write`** → dotenv basename check, then `DenyPath`.
 3. **`file_write`** also → `ProtectWrite` (scoped to the project root), then
    `SecretContent` against `Content`.
+4. **`network`** → match `URL` against `DenyNetwork` (SSRF/scheme shapes).
+5. **`mcp`** → match `Tool` against `DenyMCP` (empty by default; opt-in by name).
 
 Default verdict is **allow**; the first matching rule blocks and names the
 control and rule that fired.
@@ -73,8 +77,9 @@ in code rather than a negative-lookahead pattern. Everything else is RE2.
 
 ## Policy
 
-`policy.Policy` holds four rule sets — `DenyExec`, `DenyPath`, `ProtectWrite`,
-`SecretContent` — each a list of `Rule{Name, Pattern, Control, Reason}`.
+`policy.Policy` holds six rule sets — `DenyExec`, `DenyPath`, `ProtectWrite`,
+`SecretContent`, `DenyNetwork`, and `DenyMCP` — each a list of
+`Rule{Name, Pattern, Control, Reason}`.
 
 - `policy.Default()` returns the compiled-in secure baseline.
 - `policy.Load(path, optional)` starts from the defaults and overlays a JSON
@@ -249,6 +254,7 @@ Rules carry a control id from the *Zero Trust for AI Agents* Foundation tier:
 | IA-02 | credential protection |
 | IR-01 | policy integrity |
 | IO-02 | secret hygiene (no secrets in code) |
+| SC-07 | network boundary protection (fetch SSRF prevention) |
 
 ## Auditor (`zta audit`)
 
@@ -267,49 +273,49 @@ agent identity, org incident response) are `N/A`. Logging controls (OA-01/02)
 currently rely on the legacy logging hook — they will be satisfied by zta's own
 logging once that lands.
 
+## Network & MCP gating
+
+The engine gates the agent's `WebFetch` (the `network` action) and its MCP tool
+calls (the `mcp` action) in addition to shell and file operations.
+
+**`network` / `DenyNetwork` (control SC-07).** `ClaudeStyleEvent()` maps a
+`WebFetch` tool call (`{"tool_name":"WebFetch","tool_input":{"url":"..."}}`) to
+an `ActionNetwork` event carrying the URL; `zta init` includes `WebFetch` in the
+`PreToolUse` matcher so the hook actually fires. The default rules target SSRF
+shapes only — cloud instance-metadata endpoints (`169.254.169.254`,
+`metadata.google.internal`, …), loopback/RFC1918/link-local hosts (anchored to
+the URL's host position, so the same digits in a path don't false-positive), and
+non-web schemes (`file://`, `gopher://`, …) that would bypass the file-read
+guard. This deliberately does **not** try to block exfiltration to an arbitrary
+public host: there's no reliable deterministic signal for that, and claiming
+otherwise would violate the "honest limits" ethos. True network containment is
+the sandbox tier's `--network none`.
+
+**`mcp` / `DenyMCP`.** MCP tool calls are named `mcp__<server>__<tool>`;
+`ClaudeStyleEvent()` maps that prefix to an `ActionMCP` event carrying the tool
+name, and `zta init` adds `mcp__.*` to the matcher. `DenyMCP` is **empty by
+default** — MCP tool semantics vary per server, so there's no safe universal
+block — but the arm still runs on every call, which means MCP invocations now
+appear in the audit log (observability that didn't exist before). A repo can
+deny specific servers/tools by name with a `deny_mcp` rule, e.g.
+`{"deny_mcp":[{"name":"no-shell-mcp","control":"AC-01","reason":"…","pattern":"^mcp__shell__"}]}`.
+
+Copilot's name-substring adapter also recognizes fetch-style (`web`/`fetch`) and
+`mcp`-prefixed tools; Cursor inherits both via its `preToolUse` → `ClaudeStyleEvent`
+path. Codex has MCP but no WebFetch-equivalent, so its matcher adds `mcp__.*`
+only.
+
+> Note: a repo wired before this landed keeps its old `PreToolUse` matcher until a
+> human re-runs `zta init --force` (the guard can't edit its own `.claude/`
+> config). Until then the new arms are compiled into the binary but never
+> invoked for that repo's WebFetch/MCP calls.
+
 ## Known gaps
 
-### IO-01: WebFetch is not gated by the engine
-
-`zta audit` currently scores IO-01 `PASS` once `.claude/settings.json` lists
-`WebFetch` under `permissions.ask` (or `deny`), or a `.claude/agents/researcher.md`
-scoped subagent exists. That's a real control — Claude Code's native permission
-system will prompt/block before any WebFetch call — but it's mediated entirely
-by Claude Code, not by zta. zta itself has no engine-level enforcement or
-audit-log coverage of network fetches today:
-
-- `policy.Event`'s `Action` enum (`internal/policy/policy.go`) only has
-  `ActionExec`, `ActionFileRead`, `ActionFileWrite` — no network action.
-- `engine.Evaluate()` (`internal/engine/engine.go`) has no case for a network
-  request, so even if an event carried a URL there's no rule to check it
-  against.
-- The Claude Code adapter's `ClaudeStyleEvent()`
-  (`internal/adapter/adapter.go`) has no `"WebFetch"` case, so a WebFetch tool
-  call event would fall through as `ErrPassthrough` (ungated) today.
-- The hardcoded `PreToolUse` matcher written by `zta init`
-  (`internal/setup/setup.go`) is `"Bash|Read|Edit|Write|NotebookEdit"` — it
-  doesn't include `WebFetch`, so `zta guard` never even sees these calls.
-
-To close this for real:
-
-1. Add `ActionNetworkFetch` (or similar) to the `Action` enum in
-   `internal/policy/policy.go`.
-2. Add a `DenyURL []*Rule` rule set to `Policy` (mirroring `DenyExec` /
-   `DenyPath`), with default SSRF-style rules in `internal/policy/defaults.go`:
-   block localhost/loopback, private IP ranges (`10.x`, `172.16-31.x`,
-   `192.168.x`), and cloud metadata endpoints (`169.254.169.254`).
-3. Add an `ActionNetworkFetch` case to `engine.Evaluate()` that checks the
-   event's URL against `DenyURL`.
-4. Add a `case "WebFetch":` to `adapter.ClaudeStyleEvent()` that extracts the
-   `url` field from `tool_input`, per Claude Code's hook schema
-   (`{"tool_name":"WebFetch","tool_input":{"url":"..."}}`).
-5. Update the matcher in `internal/setup/setup.go` to
-   `"Bash|Read|Edit|Write|NotebookEdit|WebFetch"` so the `PreToolUse` hook
-   actually fires for WebFetch calls.
-6. Once wired, `internal/auditlog` starts capturing WebFetch calls too, giving
-   OA-01/02 coverage of network egress instead of just the Claude-native
-   ask-prompt.
-
-Codex/Cursor/Copilot have no WebFetch-equivalent tool today, so this is
-Claude-Code-specific until another adapter's agent grows a comparable fetch
-tool.
+- **Exfiltration to arbitrary hosts** is out of scope for `network` gating (see
+  above) — use Docker mode's `--network none`.
+- **`WebSearch`** (and other read-only, non-fetch tools) remain passthrough:
+  there's no deterministic security rule for a search string.
+- Only the agent's *declared* tool calls are seen at the hook boundary; raw
+  sockets opened inside a `Bash` command are the shell guard's concern, and
+  full network containment belongs to the sandbox/Docker tier.

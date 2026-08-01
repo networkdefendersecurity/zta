@@ -18,6 +18,8 @@ const (
 	ActionExec      Action = "exec"       // run a shell command
 	ActionFileRead  Action = "file_read"  // read a file
 	ActionFileWrite Action = "file_write" // create/modify a file
+	ActionNetwork   Action = "network"    // fetch a URL (e.g. WebFetch)
+	ActionMCP       Action = "mcp"        // invoke an MCP tool
 )
 
 // Event is an agent operation normalized into a single shape the engine can
@@ -27,6 +29,8 @@ type Event struct {
 	Command string // shell command, for ActionExec
 	Path    string // target file, for file actions
 	Content string // content being written, for ActionFileWrite
+	URL     string // target URL, for ActionNetwork
+	Tool    string // tool name, for ActionMCP (e.g. mcp__github__create_issue)
 	Agent   string // originating agent, e.g. "claude-code"
 	Session string // agent session id, for log attribution (optional)
 }
@@ -61,6 +65,8 @@ type Policy struct {
 	DenyPath      []*Rule `json:"deny_path"`      // files off-limits to any access
 	ProtectWrite  []*Rule `json:"protect_write"`  // paths write-protected within the project
 	SecretContent []*Rule `json:"secret_content"` // secret patterns blocked from being written
+	DenyNetwork   []*Rule `json:"deny_network"`   // blocked fetch URLs (SSRF, scheme escapes)
+	DenyMCP       []*Rule `json:"deny_mcp"`       // blocked MCP tool names (opt-in; empty by default)
 
 	// ProjectRoot scopes ProtectWrite to this directory. Set at runtime, never
 	// serialized.
@@ -69,7 +75,7 @@ type Policy struct {
 
 // Compile prepares all rule regexes for matching. Call once after loading.
 func (p *Policy) Compile() error {
-	for _, set := range [][]*Rule{p.DenyExec, p.DenyPath, p.ProtectWrite, p.SecretContent} {
+	for _, set := range [][]*Rule{p.DenyExec, p.DenyPath, p.ProtectWrite, p.SecretContent, p.DenyNetwork, p.DenyMCP} {
 		for _, r := range set {
 			re, err := regexp.Compile(r.Pattern)
 			if err != nil {

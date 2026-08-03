@@ -1,7 +1,7 @@
 # zta — guardrails for AI coding agents
 
 `zta` is a tiny, single-file tool that stops an AI coding agent from doing
-dangerous things in your project — **before** they happen. It works with Claude
+dangerous things in your project **before** they happen. It works with Claude
 Code, Codex, Cursor, and GitHub Copilot, and needs no cloud account, API key, or
 configuration to get started.
 

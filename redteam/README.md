@@ -23,16 +23,19 @@ redteam/run.py --only dd-01,sec-01   # run a subset
 ```
 
 `cases.json` holds the matrix: every `DenyExec`/`DenyPath`/`ProtectWrite`/
-`SecretContent` rule in `internal/policy/defaults.go`, the evasion shapes
-from `security-audit/AUDIT-REPORT.md` that were fixed (must stay blocked —
-these are regression guards, including the Copilot F1 nested/array payload
-fix), negative controls (safe commands that must stay allowed, to catch
+`SecretContent`/`DenyNetwork` rule in `internal/policy/defaults.go`, the
+`WebFetch` SSRF shapes and MCP tool-call gating (`network`/`mcp` actions), the
+evasion shapes from `security-audit/AUDIT-REPORT.md` that were fixed (must stay
+blocked — these are regression guards, including the Copilot F1 nested/array
+payload fix), negative controls (safe commands that must stay allowed, to catch
 over-blocking), and adapter-parity checks across `claude-code`, `codex`,
 `cursor`, and `copilot`.
 
 A few cases are marked `"gap": true` with an `audit_ref` — these are
 documented, currently-accepted bypasses (F5-followup `find -delete`, F8
-interpreter writes to `.claude/`, F10 unquoted/split secrets). The runner
+interpreter writes to `.claude/`, F10 unquoted/split secrets, and SC-07-exfil
+`WebFetch` to an arbitrary public host — left to the sandbox tier's
+`--network none`). The runner
 reports them as `GAP`, not `PASS` or `FAIL`, so they never masquerade as
 either "this is fine" or "this just broke." `--strict` turns them into
 failures if you want to track closing them over time.

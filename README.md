@@ -75,7 +75,10 @@ command like `npm test` would print `exit=0`.
 `zta` is a single binary, so upgrading is a drop-in swap — releases are additive,
 with no breaking changes or config migration. Your existing wiring keeps working
 because the hook it installs (`zta guard --agent <name>`) is stable across
-versions, so **you don't need to re-run `zta init`**.
+versions, so **you don't need to re-run `zta init`** to keep your current
+coverage. The exception is when a release starts gating a *new tool*: the set of
+tools the hook fires on lives in your agent's config, so picking up new coverage
+means re-wiring with `--force` (see the notes below).
 
 **Prebuilt binary:** download the new version for your platform from
 [Releases](../../releases), replace the old one on your `PATH`, and confirm:
@@ -98,6 +101,15 @@ sudo install -m755 zta /usr/local/bin/zta
 > ```bash
 > zta init --agent copilot --force
 > ```
+
+> **WebFetch & MCP (v0.4.0):** engine-level gating of `WebFetch` (SSRF shapes) and
+> MCP tool calls was added in v0.4.0. If you wired a repo before then, the new
+> binary won't see those calls until you widen the hook matcher by re-wiring:
+> ```bash
+> zta init --agent claude-code --force   # or codex
+> ```
+> Upgrading the binary alone is enough for all pre-existing shell/file coverage;
+> this `--force` step only affects the newly-added WebFetch/MCP tools.
 
 ---
 
